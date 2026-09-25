@@ -1,4 +1,7 @@
 import streamlit as st
+from openai import OpenAI
+
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 st.set_page_config(
     page_title="Teacher AI",
@@ -32,8 +35,22 @@ if page == "Today":
         "plans and actual classroom progress."
     )
 
-    if st.button("✨ Generate Today's Plan", type="primary"):
-        st.info("AI lesson generation will be connected here next.")
+if st.button("✨ Generate Today's Plan", type="primary"):
+    with st.spinner("Connecting to Teacher AI..."):
+        try:
+            response = client.responses.create(
+                model="gpt-5.4-mini",
+                input=(
+                    "You are Teacher AI, an adaptive planning assistant for primary school teachers. "
+                    "For this connection test, reply with exactly: "
+                    "Teacher AI is connected and ready to plan."
+                )
+            )
+
+            st.success(response.output_text)
+
+        except Exception as e:
+            st.error(f"Connection error: {e}")
 
     st.subheader("Lessons")
 
