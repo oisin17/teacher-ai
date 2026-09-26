@@ -93,7 +93,10 @@ if page == "Today":
         "Your teaching day will appear here based on your timetable, "
         "plans and actual classroom progress."
     )
-
+    planning_day = st.selectbox(
+        "Which day are you planning?",
+        ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+    )
 if st.button("✨ Generate Today's Plan", type="primary"):
 
     teacher_profile = st.session_state.get("teacher_profile", {})
@@ -109,8 +112,7 @@ if st.button("✨ Generate Today's Plan", type="primary"):
     elif not monthly_plan_text:
         st.warning("Please upload and save your Monthly Plan first.")
 
-    elif not timetable_text:
-        st.warning("Please upload and save your Weekly Timetable first.")
+
 
     else:
         with st.spinner("Teacher AI is planning your day..."):
@@ -121,8 +123,8 @@ if st.button("✨ Generate Today's Plan", type="primary"):
                         "You are Teacher AI, an adaptive planning assistant "
                         "for primary school teachers.\n\n"
 
-                        "Your job is to create a practical teaching plan for TODAY "
-                        "using the teacher's real context below.\n\n"
+                        f"Your job is to create a practical teaching plan for {planning_day}. "
+                        "Use the teacher's real context below.\n\n"
 
                         "PRIORITY ORDER:\n"
                         "1. Teacher Profile\n"
@@ -131,7 +133,10 @@ if st.button("✨ Generate Today's Plan", type="primary"):
                         "4. Yearly Plan if available\n\n"
 
                         "IMPORTANT RULES:\n"
-                        "- Follow the actual timetable for the day.\n"
+                        f"- The day being planned is {planning_day}.\n"
+                        "- If a weekly timetable has been supplied, follow it for this day.\n"
+                        "- If no weekly timetable has been supplied, do not invent exact school-day lesson times. "
+                        "Create a sensible sequence of lessons from the available planning information instead.\n"
                         "- Use the monthly plan as the main authority for current learning.\n"
                         "- Do not invent textbook pages, exercises or content that is not supplied.\n"
                         "- Do not assume a PowerPoint or worksheet exists.\n"
