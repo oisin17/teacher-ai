@@ -5,7 +5,46 @@ from pypdf import PdfReader
 from docx import Document
 
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+def extract_text_from_file(uploaded_file):
+    if uploaded_file is None:
+        return ""
 
+    file_name = uploaded_file.name.lower()
+
+    try:
+        if file_name.endswith(".pdf"):
+            uploaded_file.seek(0)
+            reader = PdfReader(uploaded_file)
+
+            text = ""
+            for page in reader.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text + "\n"
+
+            uploaded_file.seek(0)
+            return text
+
+        elif file_name.endswith(".docx"):
+            uploaded_file.seek(0)
+            document = Document(uploaded_file)
+
+            text = "\n".join(
+                paragraph.text
+                for paragraph in document.paragraphs
+                if paragraph.text.strip()
+            )
+
+            uploaded_file.seek(0)
+            return text
+
+        else:
+            return ""
+
+    except Exception:
+        uploaded_file.seek(0)
+        return ""
+        
 st.set_page_config(
     page_title="Teacher AI",
     page_icon="📚",
@@ -319,10 +358,14 @@ elif page == "Planning Setup":
 
     if st.button("Save Planning Setup", type="primary"):
 
+        timetable_text = extract_text_from_file(timetable)
+        monthly_plan_text = extract_text_from_file(monthly_plan)
+        yearly_plan_text = extract_text_from_file(yearly_plan)
+
         st.session_state["planning_setup"] = {
-            "timetable": timetable,
-            "monthly_plan": monthly_plan,
-            "yearly_plan": yearly_plan
+            "timetable_text": timetable_text,
+            "monthly_plan_text": monthly_plan_text,
+            "yearly_plan_text": yearly_plan_text
         }
 
-        st.success("Planning setup saved for this session.")
+        st.success("Planning setup saved and documents processed.")
