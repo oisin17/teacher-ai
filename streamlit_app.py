@@ -1,5 +1,8 @@
 import streamlit as st
 from openai import OpenAI
+import io
+from pypdf import PdfReader
+from docx import Document
 
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
@@ -315,4 +318,11 @@ elif page == "Planning Setup":
     )
 
     if st.button("Save Planning Setup", type="primary"):
+
+        st.session_state["planning_setup"] = {
+            "timetable": timetable,
+            "monthly_plan": monthly_plan,
+            "yearly_plan": yearly_plan
+        }
+
         st.success("Planning setup saved for this session.")
