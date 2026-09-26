@@ -35,22 +35,27 @@ if page == "Today":
         "plans and actual classroom progress."
     )
 
-if st.button("✨ Generate Today's Plan", type="primary"):
-    with st.spinner("Connecting to Teacher AI..."):
-        try:
-            response = client.responses.create(
-                model="gpt-5.4-mini",
+    if st.button("✨ Generate Today's Plan", type="primary"):
+        with st.spinner("Connecting to Teacher AI..."):
+            try:
+                response = client.responses.create(
+                    model="gpt-5.4-mini",
                 input=(
-                    "You are Teacher AI, an adaptive planning assistant for primary school teachers. "
-                    "For this connection test, reply with exactly: "
-                    "Teacher AI is connected and ready to plan."
+                    "You are Teacher AI, an adaptive planning assistant for primary school teachers.\n\n"
+                    f"TEACHER PROFILE:\n{st.session_state.get('teacher_profile', {})}\n\n"
+                    "This is a profile-reading test. "
+                    "If a Teacher Profile has been saved, briefly state the class level, "
+                    "number of pupils, and school language from the profile. "
+                    "Do not invent any information that is not present. "
+                    "If no Teacher Profile has been saved, reply exactly: "
+                    "No Teacher Profile has been saved yet."
                 )
-            )
+                )
 
-            st.success(response.output_text)
+                st.success(response.output_text)
 
-        except Exception as e:
-            st.error(f"Connection error: {e}")
+            except Exception as e:
+                st.error(f"Connection error: {e}")
 
     st.subheader("Lessons")
 
