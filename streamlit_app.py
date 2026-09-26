@@ -94,37 +94,99 @@ if page == "Today":
         "plans and actual classroom progress."
     )
 
-    if st.button("✨ Generate Today's Plan", type="primary"):
-        with st.spinner("Connecting to Teacher AI..."):
+if st.button("✨ Generate Today's Plan", type="primary"):
+
+    teacher_profile = st.session_state.get("teacher_profile", {})
+    planning_setup = st.session_state.get("planning_setup", {})
+
+    timetable_text = planning_setup.get("timetable_text", "")
+    monthly_plan_text = planning_setup.get("monthly_plan_text", "")
+    yearly_plan_text = planning_setup.get("yearly_plan_text", "")
+
+    if not teacher_profile:
+        st.warning("Please save your Teacher Profile first.")
+
+    elif not monthly_plan_text:
+        st.warning("Please upload and save your Monthly Plan first.")
+
+    elif not timetable_text:
+        st.warning("Please upload and save your Weekly Timetable first.")
+
+    else:
+        with st.spinner("Teacher AI is planning your day..."):
             try:
                 response = client.responses.create(
                     model="gpt-5.4-mini",
-input=(
-    "You are Teacher AI, an adaptive planning assistant for primary school teachers.\n\n"
-    f"MONTHLY PLAN:\n{st.session_state.get('planning_setup', {}).get('monthly_plan_text', '')}\n\n"
-    "This is a monthly-plan reading test. "
-    "Using only the monthly plan above, identify: "
-    "1. The main Maths topics or objectives. "
-    "2. The main English topics or objectives. "
-    "3. One Science topic or objective. "
-    "Keep the response brief. "
-    "Do not invent information that is not contained in the monthly plan. "
-    "If no monthly plan is available, reply exactly: "
-    "No Monthly Plan has been saved yet."
-)
+                    input=(
+                        "You are Teacher AI, an adaptive planning assistant "
+                        "for primary school teachers.\n\n"
+
+                        "Your job is to create a practical teaching plan for TODAY "
+                        "using the teacher's real context below.\n\n"
+
+                        "PRIORITY ORDER:\n"
+                        "1. Teacher Profile\n"
+                        "2. Current Monthly Plan\n"
+                        "3. Weekly Timetable\n"
+                        "4. Yearly Plan if available\n\n"
+
+                        "IMPORTANT RULES:\n"
+                        "- Follow the actual timetable for the day.\n"
+                        "- Use the monthly plan as the main authority for current learning.\n"
+                        "- Do not invent textbook pages, exercises or content that is not supplied.\n"
+                        "- Do not assume a PowerPoint or worksheet exists.\n"
+                        "- Lessons must stand alone without optional generated resources.\n"
+                        "- Make lessons enjoyable, active and engaging where this genuinely "
+                        "supports the learning intention.\n"
+                        "- Consider mini-games, challenges, mystery, pupil-v-teacher, "
+                        "mini-whiteboards, movement, hands-on learning, prediction, "
+                        "partner challenges and interactive-board activities where appropriate.\n"
+                        "- Do not force games or activities where straightforward teaching "
+                        "would be better.\n"
+                        "- Keep teacher-facing plans concise and easy to scan.\n"
+                        "- Avoid long teacher scripts.\n"
+                        "- Lesson phase timings must add exactly to the available lesson time.\n"
+                        "- Include differentiation based on the Teacher Profile.\n"
+                        "- Include an early-finisher activity where useful.\n"
+                        "- If information needed to plan safely is genuinely unknown, "
+                        "state the uncertainty rather than inventing it.\n\n"
+
+                        "FOR EACH ACTUAL TEACHING LESSON TODAY, GIVE:\n"
+                        "- Time\n"
+                        "- Subject and topic\n"
+                        "- Learning intention\n"
+                        "- Resources\n"
+                        "- A small number of timed lesson phases\n"
+                        "- Brief differentiation\n"
+                        "- Brief assessment/check for understanding\n"
+                        "- Early finisher where appropriate\n\n"
+
+                        "Do not create lessons for breaks, lunch, yard, roll call, "
+                        "tidy-up or other non-teaching periods.\n\n"
+
+                        f"TEACHER PROFILE:\n{teacher_profile}\n\n"
+                        f"WEEKLY TIMETABLE:\n{timetable_text}\n\n"
+                        f"CURRENT MONTHLY PLAN:\n{monthly_plan_text}\n\n"
+                        f"YEARLY PLAN:\n{yearly_plan_text}\n\n"
+
+                        "Generate today's practical teaching plan now."
+                    )
                 )
 
-                st.success(response.output_text)
+                st.session_state["todays_plan"] = response.output_text
 
             except Exception as e:
-                st.error(f"Connection error: {e}")
+                st.error(f"Teacher AI error: {e}")
 
     st.subheader("Lessons")
 
-    st.info(
-        "No lessons generated yet. Once Teacher AI is connected, "
-        "your timetable and lessons will appear here."
-    )
+    if "todays_plan" in st.session_state:
+        st.markdown(st.session_state["todays_plan"])
+    else:
+        st.info(
+            "No lessons generated yet. Upload your planning documents "
+            "and click Generate Today's Plan."
+        )
 
 # ---------- TEACHER PROFILE ----------
 
