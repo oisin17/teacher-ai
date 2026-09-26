@@ -25,7 +25,7 @@ def extract_text_from_file(uploaded_file):
             uploaded_file.seek(0)
             return text
 
-                elif file_name.endswith(".docx"):
+        elif file_name.endswith(".docx"):
             uploaded_file.seek(0)
             document = Document(uploaded_file)
 
