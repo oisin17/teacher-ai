@@ -82,16 +82,19 @@ if page == "Today":
             try:
                 response = client.responses.create(
                     model="gpt-5.4-mini",
-                input=(
-                    "You are Teacher AI, an adaptive planning assistant for primary school teachers.\n\n"
-                    f"TEACHER PROFILE:\n{st.session_state.get('teacher_profile', {})}\n\n"
-                    "This is a profile-reading test. "
-                    "If a Teacher Profile has been saved, briefly state the class level, "
-                    "number of pupils, and school language from the profile. "
-                    "Do not invent any information that is not present. "
-                    "If no Teacher Profile has been saved, reply exactly: "
-                    "No Teacher Profile has been saved yet."
-                )
+input=(
+    "You are Teacher AI, an adaptive planning assistant for primary school teachers.\n\n"
+    f"MONTHLY PLAN:\n{st.session_state.get('planning_setup', {}).get('monthly_plan_text', '')}\n\n"
+    "This is a monthly-plan reading test. "
+    "Using only the monthly plan above, identify: "
+    "1. The main Maths topics or objectives. "
+    "2. The main English topics or objectives. "
+    "3. One Science topic or objective. "
+    "Keep the response brief. "
+    "Do not invent information that is not contained in the monthly plan. "
+    "If no monthly plan is available, reply exactly: "
+    "No Monthly Plan has been saved yet."
+)
                 )
 
                 st.success(response.output_text)
