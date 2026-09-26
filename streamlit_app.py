@@ -25,35 +25,35 @@ def extract_text_from_file(uploaded_file):
             uploaded_file.seek(0)
             return text
 
-elif file_name.endswith(".docx"):
-    uploaded_file.seek(0)
-    document = Document(uploaded_file)
-
-    text_parts = []
-
-    # Read normal paragraphs
-    for paragraph in document.paragraphs:
-        if paragraph.text.strip():
-            text_parts.append(paragraph.text.strip())
-
-    # Read text inside tables
-    for table in document.tables:
-        for row in table.rows:
-            row_text = []
-
-            for cell in row.cells:
-                cell_text = cell.text.strip()
-
-                if cell_text:
-                    row_text.append(cell_text)
-
-            if row_text:
-                text_parts.append(" | ".join(row_text))
-
-    text = "\n".join(text_parts)
-
-    uploaded_file.seek(0)
-    return text
+        elif file_name.endswith(".docx"):
+        uploaded_file.seek(0)
+        document = Document(uploaded_file)
+    
+        text_parts = []
+    
+        # Read normal paragraphs
+        for paragraph in document.paragraphs:
+            if paragraph.text.strip():
+                text_parts.append(paragraph.text.strip())
+    
+        # Read text inside tables
+        for table in document.tables:
+            for row in table.rows:
+                row_text = []
+    
+                for cell in row.cells:
+                    cell_text = cell.text.strip()
+    
+                    if cell_text:
+                        row_text.append(cell_text)
+    
+                if row_text:
+                    text_parts.append(" | ".join(row_text))
+    
+        text = "\n".join(text_parts)
+    
+        uploaded_file.seek(0)
+        return text
 
         else:
             return ""
