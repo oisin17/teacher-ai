@@ -199,7 +199,7 @@ if st.button("✨ Generate Today's Plan", type="primary"):
                         "- Prioritise subjects and learning that are due from the Monthly Plan, unfinished learning where known, recurring learning, and subjects that need appropriate coverage across the week.\n"
                         "- Do not create lessons for non-teaching routines such as roll call, food breaks, yard or tidy-up. Preserve them in the timetable where they affect when teaching can occur.\n"
                         "- If a recurring routine can legitimately contribute to curriculum provision, such as DEAR or the recorded Religion routine, account for it appropriately without unnecessarily duplicating that provision elsewhere.\n"
-                        "- When no weekly timetable exists, the resulting plan should still show practical clock times for the teaching lessons because the Teacher Profile provides the boundaries of the school day.\n"n"
+                        "- When no weekly timetable exists, the resulting plan should still show practical clock times for the teaching lessons because the Teacher Profile provides the boundaries of the school day.\n"
                         "- Use the monthly plan as the main authority for current learning.\n"
                         "- Do not invent textbook pages, exercises or content that is not supplied.\n"
                         "- Do not assume a PowerPoint or worksheet exists.\n"
