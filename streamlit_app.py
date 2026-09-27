@@ -91,6 +91,22 @@ def save_planning_setup(planning_setup):
 
     connection.commit()
     connection.close()
+
+def load_planning_setup():
+    connection = sqlite3.connect("teacher_ai.db")
+    cursor = connection.cursor()
+
+    cursor.execute(
+        "SELECT planning_data FROM planning_setup WHERE id = 1"
+    )
+
+    result = cursor.fetchone()
+    connection.close()
+
+    if result:
+        return json.loads(result[0])
+
+    return {}
 if "teacher_profile" not in st.session_state:
     st.session_state["teacher_profile"] = load_teacher_profile()
     
