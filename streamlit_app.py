@@ -3,8 +3,65 @@ from openai import OpenAI
 import io
 from pypdf import PdfReader
 from docx import Document
+import sqlite3
+import json
 
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+
+def init_database():
+    connection = sqlite3.connect("teacher_ai.db")
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS teacher_profile (
+            id INTEGER PRIMARY KEY,
+            profile_data TEXT NOT NULL
+        )
+    """)
+
+    connection.commit()
+    connection.close()
+
+
+init_database()
+
+def save_teacher_profile(profile):
+    connection = sqlite3.connect("teacher_ai.db")
+    cursor = connection.cursor()
+
+    profile_json = json.dumps(profile)
+
+    cursor.execute(
+        """
+        INSERT OR REPLACE INTO teacher_profile (id, profile_data)
+        VALUES (1, ?)
+        """,
+        (profile_json,)
+    )
+
+    connection.commit()
+    connection.close()
+
+
+def load_teacher_profile():
+    connection = sqlite3.connect("teacher_ai.db")
+    cursor = connection.cursor()
+
+    cursor.execute(
+        "SELECT profile_data FROM teacher_profile WHERE id = 1"
+    )
+
+    result = cursor.fetchone()
+    connection.close()
+
+    if result:
+        return json.loads(result[0])
+
+    return {}
+
+if "teacher_profile" not in st.session_state:
+    st.session_state["teacher_profile"] = load_teacher_profile()
+    
 def extract_text_from_file(uploaded_file):
     if uploaded_file is None:
         return ""
@@ -199,6 +256,8 @@ elif page == "Teacher Profile":
 
     st.header("Teacher Profile")
 
+    saved_profile = st.session_state.get("teacher_profile", {})
+
     st.write(
         "Tell Teacher AI about your class, teaching preferences and "
         "classroom setup. This context will shape future lesson planning."
@@ -211,34 +270,45 @@ elif page == "Teacher Profile":
     col1, col2 = st.columns(2)
 
     with col1:
+        class_options = [
+            "Junior Infants",
+            "Senior Infants",
+            "1st Class",
+            "2nd Class",
+            "3rd Class",
+            "4th Class",
+            "5th Class",
+            "6th Class"
+        ]
+
+        saved_class = saved_profile.get("class_level", "5th Class")
+
         class_level = st.selectbox(
             "Class level",
-            [
-                "Junior Infants",
-                "Senior Infants",
-                "1st Class",
-                "2nd Class",
-                "3rd Class",
-                "4th Class",
-                "5th Class",
-                "6th Class"
-            ],
-            index=6
+            class_options,
+            index=class_options.index(saved_class)
         )
 
     with col2:
+        language_options = ["English-medium", "Irish-medium"]
+
+        saved_language = saved_profile.get(
+            "language",
+            "English-medium"
+        )
+
         language = st.selectbox(
             "School language",
-            ["English-medium", "Irish-medium"]
+            language_options,
+            index=language_options.index(saved_language)
         )
 
     pupil_count = st.number_input(
         "Number of pupils",
         min_value=1,
         max_value=40,
-        value=27
+        value=saved_profile.get("pupil_count", 27)
     )
-
     st.divider()
 
     # ----- PROGRAMMES -----
@@ -260,6 +330,7 @@ elif page == "Teacher Profile":
             "Gaeilge — Abair Liom 5, Am don Léamh 5\n"
             "SESE — Explore With Me 5"
         ),
+        value=saved_profile.get("programmes", ""),
         height=140
     )
 
@@ -276,6 +347,7 @@ elif page == "Teacher Profile":
             "Chromebooks, dice, counters, maths manipulatives, "
             "A4/A3 paper..."
         ),
+        value=saved_profile.get("resources", ""),
         height=120
     )
 
@@ -310,8 +382,10 @@ elif page == "Teacher Profile":
             "Explicit teacher modelling",
             "Independent practice",
             "Discussion"
-        ]
+        ],
+        default=saved_profile.get("preferred_methods", [])
     )
+    
 
     minimise_methods = st.multiselect(
         "I prefer to minimise:",
@@ -325,7 +399,8 @@ elif page == "Teacher Profile":
             "Competition",
             "Movement",
             "Creative activities"
-        ]
+        ],
+        default=saved_profile.get("minimise_methods", [])
     )
 
     teaching_notes = st.text_area(
@@ -334,6 +409,7 @@ elif page == "Teacher Profile":
             "e.g. Keep lessons practical and engaging. "
             "I like concise plans that I can understand quickly."
         ),
+        value=saved_profile.get("teaching_notes", ""),
         height=100
     )
 
@@ -347,7 +423,7 @@ elif page == "Teacher Profile":
         "Number of pupils with Irish exemptions",
         min_value=0,
         max_value=40,
-        value=0
+        value=saved_profile.get("irish_exemptions", 0)
     )
 
     differentiation = st.text_area(
@@ -356,6 +432,7 @@ elif page == "Teacher Profile":
             "Describe recurring differentiation needs or classroom "
             "arrangements Teacher AI should account for."
         ),
+        value=saved_profile.get("differentiation", ""),
         height=120
     )
 
@@ -372,6 +449,7 @@ elif page == "Teacher Profile":
             "Religion arrangements, Chromebook access, "
             "regular classroom routines..."
         ),
+        value=saved_profile.get("recurring_arrangements", ""),
         height=120
     )
 
@@ -395,7 +473,8 @@ elif page == "Teacher Profile":
     st.divider()
 
     if st.button("Save Teacher Profile", type="primary"):
-        st.session_state["teacher_profile"] = {
+
+        profile = {
             "class_level": class_level,
             "language": language,
             "pupil_count": pupil_count,
@@ -409,7 +488,10 @@ elif page == "Teacher Profile":
             "recurring_arrangements": recurring
         }
 
-        st.success("Teacher Profile saved for this session.")
+        st.session_state["teacher_profile"] = profile
+        save_teacher_profile(profile)
+
+        st.success("Teacher Profile saved.")
 
 # ---------- PLANNING SETUP ----------
 
