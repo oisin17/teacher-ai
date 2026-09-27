@@ -300,7 +300,7 @@ if st.button("✨ Generate Today's Plan", type="primary"):
 
     if "todays_plan" in st.session_state:
         st.markdown(st.session_state["todays_plan"])
-    st.divider()
+        st.divider()
         st.subheader("How did today go?")
 
     progress_status = st.radio(
