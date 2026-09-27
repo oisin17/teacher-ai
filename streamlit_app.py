@@ -303,40 +303,40 @@ if st.button("✨ Generate Today's Plan", type="primary"):
         st.divider()
         st.subheader("How did today go?")
 
-    progress_status = st.radio(
-        "Overall progress",
-        ["Completed", "Partially completed", "Not taught"],
-        horizontal=True
-    )
-
-    progress_notes = st.text_area(
-        "What actually happened? (optional)",
-        placeholder="e.g. Maths completed. Gaeilge only reached the first activity. Science was not taught because of an assembly."
-    )
-
-    if st.button("Save Today's Progress"):
-        connection = sqlite3.connect("teacher_ai.db")
-        cursor = connection.cursor()
-
-        cursor.execute(
-            """
-            INSERT INTO actual_progress
-            (planning_day, subject, lesson_topic, status, notes)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (
-                str(planning_date),
-                "Full day",
-                "Daily teaching plan",
-                progress_status,
-                progress_notes
-            )
+        progress_status = st.radio(
+            "Overall progress",
+            ["Completed", "Partially completed", "Not taught"],
+            horizontal=True
         )
-
-        connection.commit()
-        connection.close()
-
-        st.success("Today's progress saved.")
+    
+        progress_notes = st.text_area(
+            "What actually happened? (optional)",
+            placeholder="e.g. Maths completed. Gaeilge only reached the first activity. Science was not taught because of an assembly."
+        )
+    
+        if st.button("Save Today's Progress"):
+            connection = sqlite3.connect("teacher_ai.db")
+            cursor = connection.cursor()
+    
+            cursor.execute(
+                """
+                INSERT INTO actual_progress
+                (planning_day, subject, lesson_topic, status, notes)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    str(planning_date),
+                    "Full day",
+                    "Daily teaching plan",
+                    progress_status,
+                    progress_notes
+                )
+            )
+    
+            connection.commit()
+            connection.close()
+    
+            st.success("Today's progress saved.")
     else:
         st.info(
             "No lessons generated yet. Upload your planning documents "
