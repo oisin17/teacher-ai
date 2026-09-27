@@ -573,7 +573,10 @@ elif page == "Planning Setup":
         "Upload current monthly plan",
         type=["pdf", "docx"]
     )
+    saved_planning = st.session_state.get("planning_setup", {})
 
+    if saved_planning.get("monthly_plan_text"):
+        st.success("✓ Monthly Plan saved")
     st.subheader("Yearly Plan")
 
     yearly_plan = st.file_uploader(
