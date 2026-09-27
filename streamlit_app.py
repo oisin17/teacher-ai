@@ -109,6 +109,8 @@ def load_planning_setup():
     return {}
 if "teacher_profile" not in st.session_state:
     st.session_state["teacher_profile"] = load_teacher_profile()
+if "planning_setup" not in st.session_state:
+    st.session_state["planning_setup"] = load_planning_setup()
     
 def extract_text_from_file(uploaded_file):
     if uploaded_file is None:
