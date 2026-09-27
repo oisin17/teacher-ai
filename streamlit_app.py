@@ -592,5 +592,6 @@ elif page == "Planning Setup":
             "monthly_plan_text": monthly_plan_text,
             "yearly_plan_text": yearly_plan_text
         }
+        save_planning_setup(st.session_state["planning_setup"])
 
         st.success("Planning setup saved and documents processed.")
