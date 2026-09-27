@@ -28,7 +28,12 @@ def init_database():
             notes TEXT
         )
     """)
-
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS planning_setup (
+            id INTEGER PRIMARY KEY,
+            planning_data TEXT NOT NULL
+        )
+    """)
     connection.commit()
     connection.close()
 
