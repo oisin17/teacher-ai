@@ -301,21 +301,42 @@ if st.button("✨ Generate Today's Plan", type="primary"):
     if "todays_plan" in st.session_state:
         st.markdown(st.session_state["todays_plan"])
     st.divider()
-    st.subheader("How did today go?")
+           st.subheader("How did today go?")
 
-    progress_status = st.radio(
-        "Overall progress",
-        ["Completed", "Partially completed", "Not taught"],
-        horizontal=True
-    )
+        progress_status = st.radio(
+            "Overall progress",
+            ["Completed", "Partially completed", "Not taught"],
+            horizontal=True
+        )
 
-    progress_notes = st.text_area(
-        "What actually happened? (optional)",
-        placeholder="e.g. Maths completed. Gaeilge only reached the first activity. Science was not taught because of an assembly."
-    )
+        progress_notes = st.text_area(
+            "What actually happened? (optional)",
+            placeholder="e.g. Maths completed. Gaeilge only reached the first activity. Science was not taught because of an assembly."
+        )
 
-    if st.button("Save Today's Progress"):
-        st.success("Today's progress ready to save.")
+        if st.button("Save Today's Progress"):
+            connection = sqlite3.connect("teacher_ai.db")
+            cursor = connection.cursor()
+
+            cursor.execute(
+                """
+                INSERT INTO actual_progress
+                (planning_day, subject, lesson_topic, status, notes)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    str(planning_date),
+                    "Full day",
+                    "Daily teaching plan",
+                    progress_status,
+                    progress_notes
+                )
+            )
+
+            connection.commit()
+            connection.close()
+
+            st.success("Today's progress saved.")
     else:
         st.info(
             "No lessons generated yet. Upload your planning documents "
