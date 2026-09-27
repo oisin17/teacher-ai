@@ -17,6 +17,16 @@ def init_database():
             id INTEGER PRIMARY KEY,
             profile_data TEXT NOT NULL
         )
+    """)    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS actual_progress (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            planning_day TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            lesson_topic TEXT,
+            status TEXT NOT NULL,
+            notes TEXT
+        )
     """)
 
     connection.commit()
