@@ -107,6 +107,32 @@ def load_planning_setup():
         return json.loads(result[0])
 
     return {}
+
+def load_recent_progress(limit=10):
+    connection = sqlite3.connect("teacher_ai.db")
+    cursor = connection.cursor()
+    cursor.execute(
+        """
+        SELECT planning_day, subject, lesson_topic, status, notes
+        FROM actual_progress
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (limit,)
+    )
+    rows = cursor.fetchall()
+    connection.close()
+    return [
+        {
+            "planning_day": row[0],
+            "subject": row[1],
+            "lesson_topic": row[2],
+            "status": row[3],
+            "notes": row[4]
+        }
+        for row in rows
+    ]
+
 if "teacher_profile" not in st.session_state:
     st.session_state["teacher_profile"] = load_teacher_profile()
 if "planning_setup" not in st.session_state:
@@ -224,6 +250,8 @@ if page == "Today":
         else:
             with st.spinner("Teacher AI is planning your day..."):
                 try:
+                    recent_progress = load_recent_progress()
+
                     response = client.responses.create(
                         model="gpt-5.4-mini",
                         input=(
@@ -250,7 +278,13 @@ if page == "Today":
                             "- Do not create lessons for non-teaching routines such as roll call, food breaks, yard or tidy-up. Preserve them in the timetable where they affect when teaching can occur.\n"
                             "- If a recurring routine can legitimately contribute to curriculum provision, such as DEAR or the recorded Religion routine, account for it appropriately without unnecessarily duplicating that provision elsewhere.\n"
                             "- When no weekly timetable exists, the resulting plan should still show practical clock times for the teaching lessons because the Teacher Profile provides the boundaries of the school day.\n"
-                            "- Use the monthly plan as the main authority for current learning.\n"
+                            "- Use the monthly plan as the main authority for intended current learning, but use ACTUAL PROGRESS to determine what has really been taught.\n"
+                            "- Treat saved actual classroom progress as more authoritative than assumptions based only on the monthly plan.\n"
+                            "- If progress says learning was partially completed, intelligently continue or revisit unfinished learning rather than assuming the planned lesson was completed.\n"
+                            "- If progress says a lesson was not taught, reschedule it when appropriate without assuming pupils struggled with the content.\n"
+                            "- If progress says a lesson was completed, do not unnecessarily repeat that daily lesson. Completion of one lesson does not automatically mean the wider topic, unit or recurring objective is complete.\n"
+                            "- Use teacher progress notes to identify what was actually taught, unfinished, moved or missed.\n"
+                            "- Never invent an exact stopping point. If the stopping point is unclear, begin with a brief check or retrieval activity and continue from the safest supported point.\n"
                             "- Do not invent textbook pages, exercises or content that is not supplied.\n"
                             "- Do not assume a PowerPoint or worksheet exists.\n"
                             "- Lessons must stand alone without optional generated resources.\n"
@@ -286,6 +320,7 @@ if page == "Today":
                             f"WEEKLY TIMETABLE:\n{timetable_text}\n\n"
                             f"CURRENT MONTHLY PLAN:\n{monthly_plan_text}\n\n"
                             f"YEARLY PLAN:\n{yearly_plan_text}\n\n"
+                            f"RECENT ACTUAL CLASSROOM PROGRESS (most recent first):\n{recent_progress}\n\n"
 
                             "Generate today's practical teaching plan now."
                         )
