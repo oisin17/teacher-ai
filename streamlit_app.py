@@ -147,6 +147,63 @@ def load_current_learning_position():
         return json.loads(result[0])
     return {}
 
+def load_progress_history():
+    connection = sqlite3.connect("teacher_ai.db")
+    cursor = connection.cursor()
+    cursor.execute(
+        """
+        SELECT id, planning_date, planning_day, status, notes
+        FROM actual_progress
+        WHERE planning_date IS NOT NULL
+        ORDER BY planning_date ASC, id ASC
+        """
+    )
+    rows = cursor.fetchall()
+    connection.close()
+    return [
+        {
+            "id": row[0],
+            "planning_date": row[1],
+            "planning_day": row[2],
+            "status": row[3],
+            "notes": row[4] or ""
+        }
+        for row in rows
+    ]
+
+def rebuild_current_learning_from_history():
+    history = load_progress_history()
+    if not history:
+        return st.session_state.get("current_learning_position", {})
+
+    existing_position = st.session_state.get("current_learning_position", {})
+    response = client.responses.create(
+        model="gpt-5.4-mini",
+        input=(
+            "Rebuild a primary teacher's CURRENT LEARNING POSITION from the valid dated "
+            "progress history below. Use the existing position only as background for facts "
+            "that are not contradicted by the dated history.\n\n"
+            "RULES:\n"
+            "- Process dated progress chronologically. Later teacher-confirmed progress overrides earlier progress.\n"
+            "- Never invent textbook pages, stopping points, concepts taught, or topic completion.\n"
+            "- Completed means the specific lesson/day was completed, not automatically the whole topic/unit.\n"
+            "- Partial means retain only what is safely known and preserve uncertainty where needed.\n"
+            "- Not taught due to time/interruption remains outstanding and does not imply pupil difficulty.\n"
+            "- Preserve stable constraints in Other (for example fixed PE times) unless history contradicts them.\n"
+            "- Return ONLY valid JSON with exactly these keys: Maths, English, Gaeilge, SESE, Other. "
+            "Each value must be a plain string.\n\n"
+            f"EXISTING POSITION:\n{existing_position}\n\n"
+            f"VALID DATED PROGRESS HISTORY:\n{history}\n"
+        )
+    )
+    rebuilt = json.loads(response.output_text)
+    required_keys = ["Maths", "English", "Gaeilge", "SESE", "Other"]
+    if not all(key in rebuilt and isinstance(rebuilt[key], str) for key in required_keys):
+        raise ValueError("Invalid rebuilt Current Learning Position")
+    st.session_state["current_learning_position"] = rebuilt
+    save_current_learning_position(rebuilt)
+    return rebuilt
+
 def load_recent_progress(limit=10):
     connection = sqlite3.connect("teacher_ai.db")
     cursor = connection.cursor()
@@ -252,7 +309,7 @@ st.caption("Your adaptive AI teaching planner")
 
 page = st.radio(
     "Navigation",
-    ["Today", "Current Learning", "Teacher Profile", "Planning Setup"],
+    ["Today", "Progress History", "Current Learning", "Teacher Profile", "Planning Setup"],
     horizontal=True,
     label_visibility="collapsed"
 )
@@ -541,6 +598,106 @@ if page == "Today":
             "No lessons generated yet. Upload your planning documents "
             "and click Generate Today's Plan."
         )
+
+# ---------- PROGRESS HISTORY ----------
+
+elif page == "Progress History":
+
+    st.header("Progress History")
+    st.write(
+        "Review or correct saved classroom progress. One record is kept per school date."
+    )
+
+    history = load_progress_history()
+
+    if not history:
+        st.info("No dated progress has been saved yet.")
+    else:
+        display_options = {
+            f"{item['planning_date']} — {item['planning_day']}": item
+            for item in reversed(history)
+        }
+
+        selected_label = st.selectbox(
+            "Choose a saved school date",
+            list(display_options.keys())
+        )
+        selected = display_options[selected_label]
+
+        edited_date = st.date_input(
+            "School date",
+            value=date.fromisoformat(selected["planning_date"]),
+            key=f"history_date_{selected['id']}"
+        )
+        edited_day = edited_date.strftime("%A")
+
+        edited_status = st.radio(
+            "Overall progress",
+            ["Completed", "Partially completed", "Not taught"],
+            index=["Completed", "Partially completed", "Not taught"].index(selected["status"]),
+            horizontal=True,
+            key=f"history_status_{selected['id']}"
+        )
+        edited_notes = st.text_area(
+            "What actually happened?",
+            value=selected["notes"],
+            height=160,
+            key=f"history_notes_{selected['id']}"
+        )
+
+        st.caption(
+            f"This record will be stored as **{edited_day}, {edited_date.strftime('%d %B %Y')}**."
+        )
+
+        if st.button("Save Correction", type="primary"):
+            connection = sqlite3.connect("teacher_ai.db")
+            cursor = connection.cursor()
+
+            new_date_text = edited_date.isoformat()
+            cursor.execute(
+                """
+                SELECT id FROM actual_progress
+                WHERE planning_date = ? AND id != ?
+                LIMIT 1
+                """,
+                (new_date_text, selected["id"])
+            )
+            conflict = cursor.fetchone()
+
+            if conflict:
+                connection.close()
+                st.error(
+                    "Another progress record already exists for that date. "
+                    "Choose the existing date instead of creating a duplicate."
+                )
+            else:
+                cursor.execute(
+                    """
+                    UPDATE actual_progress
+                    SET planning_date = ?, planning_day = ?, status = ?, notes = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        new_date_text,
+                        edited_day,
+                        edited_status,
+                        edited_notes,
+                        selected["id"]
+                    )
+                )
+                connection.commit()
+                connection.close()
+
+                try:
+                    rebuild_current_learning_from_history()
+                    st.success(
+                        "Progress corrected and Current Learning Position rebuilt from the valid history."
+                    )
+                    st.rerun()
+                except Exception:
+                    st.warning(
+                        "Progress was corrected, but Current Learning Position could not be rebuilt automatically."
+                    )
 
 # ---------- CURRENT LEARNING ----------
 
