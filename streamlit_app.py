@@ -34,6 +34,12 @@ def init_database():
             planning_data TEXT NOT NULL
         )
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS current_learning_position (
+            id INTEGER PRIMARY KEY,
+            position_data TEXT NOT NULL
+        )
+    """)
     connection.commit()
     connection.close()
 
@@ -108,6 +114,32 @@ def load_planning_setup():
 
     return {}
 
+def save_current_learning_position(position):
+    connection = sqlite3.connect("teacher_ai.db")
+    cursor = connection.cursor()
+    position_json = json.dumps(position)
+    cursor.execute(
+        """
+        INSERT OR REPLACE INTO current_learning_position (id, position_data)
+        VALUES (1, ?)
+        """,
+        (position_json,)
+    )
+    connection.commit()
+    connection.close()
+
+def load_current_learning_position():
+    connection = sqlite3.connect("teacher_ai.db")
+    cursor = connection.cursor()
+    cursor.execute(
+        "SELECT position_data FROM current_learning_position WHERE id = 1"
+    )
+    result = cursor.fetchone()
+    connection.close()
+    if result:
+        return json.loads(result[0])
+    return {}
+
 def load_recent_progress(limit=10):
     connection = sqlite3.connect("teacher_ai.db")
     cursor = connection.cursor()
@@ -137,6 +169,8 @@ if "teacher_profile" not in st.session_state:
     st.session_state["teacher_profile"] = load_teacher_profile()
 if "planning_setup" not in st.session_state:
     st.session_state["planning_setup"] = load_planning_setup()
+if "current_learning_position" not in st.session_state:
+    st.session_state["current_learning_position"] = load_current_learning_position()
     
 def extract_text_from_file(uploaded_file):
     if uploaded_file is None:
@@ -210,7 +244,7 @@ st.caption("Your adaptive AI teaching planner")
 
 page = st.radio(
     "Navigation",
-    ["Today", "Teacher Profile", "Planning Setup"],
+    ["Today", "Current Learning", "Teacher Profile", "Planning Setup"],
     horizontal=True,
     label_visibility="collapsed"
 )
@@ -251,6 +285,7 @@ if page == "Today":
             with st.spinner("Teacher AI is planning your day..."):
                 try:
                     recent_progress = load_recent_progress()
+                    current_learning_position = st.session_state.get("current_learning_position", {})
 
                     response = client.responses.create(
                         model="gpt-5.4-mini",
@@ -325,8 +360,10 @@ if page == "Today":
                             f"WEEKLY TIMETABLE:\n{timetable_text}\n\n"
                             f"CURRENT MONTHLY PLAN:\n{monthly_plan_text}\n\n"
                             f"YEARLY PLAN:\n{yearly_plan_text}\n\n"
+                            f"CURRENT LEARNING POSITION (teacher-confirmed current classroom position):\n{current_learning_position}\n\n"
                             f"RECENT ACTUAL CLASSROOM PROGRESS (most recent first):\n{recent_progress}\n\n"
 
+                            "Treat CURRENT LEARNING POSITION as the strongest evidence of where each subject currently is, unless newer actual-progress notes explicitly update it. The monthly plan describes intended coverage, not the class's current starting point. "
                             "Before generating the plan, silently determine for each core subject whether the evidence shows: (a) a specific lesson completed and ready to progress, (b) unfinished learning to continue, (c) missed learning to reschedule, or (d) current position genuinely unknown. Do not equate a completed lesson with a completed subject/topic/unit. Then generate today's practical teaching plan now."
                         )
                     )
@@ -382,6 +419,56 @@ if page == "Today":
             "No lessons generated yet. Upload your planning documents "
             "and click Generate Today's Plan."
         )
+
+# ---------- CURRENT LEARNING ----------
+
+elif page == "Current Learning":
+
+    st.header("Current Learning Position")
+    st.write(
+        "Record where the class actually is now. This overrides assumptions "
+        "Teacher AI might otherwise make from the order of the monthly plan."
+    )
+
+    saved_position = st.session_state.get("current_learning_position", {})
+
+    maths_position = st.text_area(
+        "Maths",
+        value=saved_position.get("Maths", ""),
+        placeholder="e.g. Addition completed. Currently moving through Subtraction."
+    )
+    english_position = st.text_area(
+        "English",
+        value=saved_position.get("English", ""),
+        placeholder="e.g. Narrative writing completed. Current reading/comprehension focus..."
+    )
+    gaeilge_position = st.text_area(
+        "Gaeilge",
+        value=saved_position.get("Gaeilge", ""),
+        placeholder="e.g. Current oral language / grammar / reading position..."
+    )
+    sese_position = st.text_area(
+        "SESE",
+        value=saved_position.get("SESE", ""),
+        placeholder="e.g. Science Heat lesson outstanding; current History/Geography position..."
+    )
+    other_position = st.text_area(
+        "Other subjects / notes",
+        value=saved_position.get("Other", ""),
+        placeholder="Anything else Teacher AI should know about the class's current position."
+    )
+
+    if st.button("Save Current Learning Position", type="primary"):
+        position = {
+            "Maths": maths_position,
+            "English": english_position,
+            "Gaeilge": gaeilge_position,
+            "SESE": sese_position,
+            "Other": other_position
+        }
+        st.session_state["current_learning_position"] = position
+        save_current_learning_position(position)
+        st.success("Current Learning Position saved.")
 
 # ---------- TEACHER PROFILE ----------
 
