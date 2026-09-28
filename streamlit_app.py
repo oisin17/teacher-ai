@@ -314,6 +314,10 @@ if page == "Today":
                             "- If a recurring routine can legitimately contribute to curriculum provision, such as DEAR or the recorded Religion routine, account for it appropriately without unnecessarily duplicating that provision elsewhere.\n"
                             "- When no weekly timetable exists, the resulting plan should still show practical clock times for the teaching lessons because the Teacher Profile provides the boundaries of the school day.\n"
                             "- Use the monthly plan as the main authority for intended current learning, but use ACTUAL PROGRESS to determine what has really been taught.\n"
+                            "- AUTHORITY: Teacher-confirmed CURRENT LEARNING POSITION and newer ACTUAL PROGRESS override conflicting Monthly Plan suggestions. The Monthly Plan is intended coverage, not permission to restart learning already confirmed complete.\n"
+                            "- HARD CONSTRAINT: Never schedule, recommend, or reintroduce a lesson focus that CURRENT LEARNING POSITION explicitly says is completed, finished, or should not be restarted, unless newer teacher-confirmed progress explicitly says to revisit it. Retrieval may briefly reference prior learning, but it must not become the main lesson focus.\n"
+                            "- Before finalising the plan, silently cross-check every proposed lesson against CURRENT LEARNING POSITION. If any lesson contradicts a teacher-confirmed current position, replace that lesson with the next evidence-supported learning focus.\n"
+                            "- If the next learning focus cannot be established safely from Current Learning, recent progress, or the Monthly Plan, say that the precise next focus is uncertain and use a short diagnostic/retrieval step rather than reverting to known-completed work.\n"
                             "- Treat saved actual classroom progress as more authoritative than assumptions based only on the monthly plan.\n"
                             "- If progress says learning was partially completed, intelligently continue or revisit unfinished learning rather than assuming the planned lesson was completed.\n"
                             "- If progress says a lesson was not taught, reschedule it when appropriate without assuming pupils struggled with the content.\n"
@@ -364,7 +368,9 @@ if page == "Today":
                             f"RECENT ACTUAL CLASSROOM PROGRESS (most recent first):\n{recent_progress}\n\n"
 
                             "Treat CURRENT LEARNING POSITION as the strongest evidence of where each subject currently is, unless newer actual-progress notes explicitly update it. The monthly plan describes intended coverage, not the class's current starting point. "
-                            "Before generating the plan, silently determine for each core subject whether the evidence shows: (a) a specific lesson completed and ready to progress, (b) unfinished learning to continue, (c) missed learning to reschedule, or (d) current position genuinely unknown. Do not equate a completed lesson with a completed subject/topic/unit. Then generate today's practical teaching plan now."
+                            "Any explicit statement such as completed, finished, do not restart, moved on from, or currently working on is a planning constraint, not merely background context. "
+                            "Before generating the plan, silently determine for each core subject whether the evidence shows: (a) a specific lesson completed and ready to progress, (b) unfinished learning to continue, (c) missed learning to reschedule, or (d) current position genuinely unknown. Do not equate a completed lesson with a completed subject/topic/unit. "
+                            "FINAL VALIDATION: compare every lesson focus in the proposed day against Current Learning Position one last time. Remove or replace any contradiction before returning the plan. Then generate today's practical teaching plan now."
                         )
                     )
 
