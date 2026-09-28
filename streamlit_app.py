@@ -328,7 +328,8 @@ if page == "Today":
     default_date = date.today()
     planning_date = st.date_input(
         "Which school date are you planning?",
-        value=default_date
+        value=default_date,
+        format="DD/MM/YYYY"
     )
     planning_day = planning_date.strftime("%A")
     st.caption(f"Planning for **{planning_day}, {planning_date.strftime('%d %B %Y')}**")
@@ -614,7 +615,7 @@ elif page == "Progress History":
         st.info("No dated progress has been saved yet.")
     else:
         display_options = {
-            f"{item['planning_date']} — {item['planning_day']}": item
+            f"{date.fromisoformat(item['planning_date']).strftime('%d/%m/%Y')} — {item['planning_day']}": item
             for item in reversed(history)
         }
 
@@ -627,6 +628,7 @@ elif page == "Progress History":
         edited_date = st.date_input(
             "School date",
             value=date.fromisoformat(selected["planning_date"]),
+            format="DD/MM/YYYY",
             key=f"history_date_{selected['id']}"
         )
         edited_day = edited_date.strftime("%A")
