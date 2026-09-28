@@ -412,8 +412,66 @@ if page == "Today":
     
             connection.commit()
             connection.close()
-    
-            st.success("Today's progress saved.")
+
+            # Use the teacher's account of what actually happened to update
+            # Teacher AI's persistent understanding of the class position.
+            if progress_notes.strip():
+                try:
+                    current_position = st.session_state.get(
+                        "current_learning_position", {}
+                    )
+
+                    update_response = client.responses.create(
+                        model="gpt-5.4-mini",
+                        input=(
+                            "You maintain a primary teacher's persistent CURRENT LEARNING POSITION. "
+                            "Update it conservatively from today's teacher-confirmed progress.\n\n"
+                            "RULES:\n"
+                            "- The teacher's progress notes are authoritative for what actually happened today.\n"
+                            "- Preserve existing information that today's notes do not change.\n"
+                            "- Do not invent textbook pages, stopping points, concepts taught, or topic completion.\n"
+                            "- 'Completed' means the specific lesson/day was completed, not automatically the whole topic/unit.\n"
+                            "- If something was partially completed, record only what is safely known and retain uncertainty about the exact stopping point unless stated.\n"
+                            "- If something was not taught because of time or interruption, keep it outstanding; do not infer pupil difficulty.\n"
+                            "- Keep entries concise and useful for planning the next lesson.\n"
+                            "- Return ONLY valid JSON with exactly these keys: Maths, English, Gaeilge, SESE, Other. "
+                            "Each value must be a plain string.\n\n"
+                            f"EXISTING CURRENT LEARNING POSITION:\n{current_position}\n\n"
+                            f"DAY: {planning_day}\n"
+                            f"OVERALL STATUS: {progress_status}\n"
+                            f"TEACHER PROGRESS NOTES:\n{progress_notes}\n"
+                        )
+                    )
+
+                    updated_position = json.loads(update_response.output_text)
+
+                    required_keys = ["Maths", "English", "Gaeilge", "SESE", "Other"]
+                    if all(
+                        key in updated_position
+                        and isinstance(updated_position[key], str)
+                        for key in required_keys
+                    ):
+                        st.session_state["current_learning_position"] = updated_position
+                        save_current_learning_position(updated_position)
+                        st.success(
+                            "Today's progress saved and Current Learning Position updated."
+                        )
+                    else:
+                        st.warning(
+                            "Today's progress was saved, but the Current Learning Position "
+                            "could not be updated automatically."
+                        )
+
+                except Exception:
+                    st.warning(
+                        "Today's progress was saved, but the Current Learning Position "
+                        "could not be updated automatically."
+                    )
+            else:
+                st.success(
+                    "Today's progress saved. Add a short note next time if you want "
+                    "Teacher AI to update Current Learning Position automatically."
+                )
     else:
         st.info(
             "No lessons generated yet. Upload your planning documents "
