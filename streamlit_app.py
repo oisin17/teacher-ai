@@ -282,8 +282,13 @@ if page == "Today":
                             "- Treat saved actual classroom progress as more authoritative than assumptions based only on the monthly plan.\n"
                             "- If progress says learning was partially completed, intelligently continue or revisit unfinished learning rather than assuming the planned lesson was completed.\n"
                             "- If progress says a lesson was not taught, reschedule it when appropriate without assuming pupils struggled with the content.\n"
-                            "- If progress says a lesson was completed, do not unnecessarily repeat that daily lesson. Completion of one lesson does not automatically mean the wider topic, unit or recurring objective is complete.\n"
+                            "- COMPLETED means that specific planned lesson was successfully taught. It does NOT mean the subject should receive less teaching next time, and it does NOT mean the wider topic, chapter, unit or recurring objective is complete unless the teacher explicitly says so.\n"
+                            "- Do not replace a normal core-subject lesson with a short retrieval/check-in merely because the previous day's lesson in that subject was completed. Continue with the next appropriate learning unless the teacher explicitly says the wider topic or unit is finished.\n"
+                            "- For recurring core subjects such as Maths, English and Gaeilge, preserve normal teaching entitlement and progression across the week. Previous completion should normally move learning FORWARD, not reduce subject time.\n"
                             "- Use teacher progress notes to identify what was actually taught, unfinished, moved or missed.\n"
+                            "- A monthly plan describes intended learning across a period; it does NOT prove the class is currently at the first objective listed. Never infer current classroom position from document order alone.\n"
+                            "- When recent progress does not establish the current position within a monthly objective, choose the safest evidence-supported continuation. If necessary, use a brief diagnostic/retrieval check, but do not reset the class to beginning-of-month material merely because it appears earlier in the monthly plan.\n"
+                            "- Treat dated or late-month planning as potentially further advanced through the monthly plan. Use actual progress as the main evidence of position, and state uncertainty where position is genuinely unknown.\n"
                             "- Never invent an exact stopping point. If the stopping point is unclear, begin with a brief check or retrieval activity and continue from the safest supported point.\n"
                             "- Do not invent textbook pages, exercises or content that is not supplied.\n"
                             "- Do not assume a PowerPoint or worksheet exists.\n"
@@ -322,7 +327,7 @@ if page == "Today":
                             f"YEARLY PLAN:\n{yearly_plan_text}\n\n"
                             f"RECENT ACTUAL CLASSROOM PROGRESS (most recent first):\n{recent_progress}\n\n"
 
-                            "Generate today's practical teaching plan now."
+                            "Before generating the plan, silently determine for each core subject whether the evidence shows: (a) a specific lesson completed and ready to progress, (b) unfinished learning to continue, (c) missed learning to reschedule, or (d) current position genuinely unknown. Do not equate a completed lesson with a completed subject/topic/unit. Then generate today's practical teaching plan now."
                         )
                     )
 
