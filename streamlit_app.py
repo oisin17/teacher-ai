@@ -447,13 +447,24 @@ if page == "Today":
                     )
 
                     st.session_state["todays_plan"] = response.output_text
+                    st.session_state["todays_plan_date"] = planning_date.isoformat()
+                    st.session_state["todays_plan_day"] = planning_day
 
                 except Exception as e:
                     st.error(f"Teacher AI error: {e}")
 
     st.subheader("Lessons")
 
-    if "todays_plan" in st.session_state:
+    plan_date_text = st.session_state.get("todays_plan_date")
+    selected_date_text = planning_date.isoformat()
+
+    if "todays_plan" in st.session_state and plan_date_text == selected_date_text:
+        plan_day = st.session_state.get("todays_plan_day", planning_day)
+        plan_date = date.fromisoformat(plan_date_text)
+
+        st.caption(
+            f"Generated for **{plan_day}, {plan_date.strftime('%d/%m/%Y')}**"
+        )
         st.markdown(st.session_state["todays_plan"])
         st.divider()
         st.subheader("How did today go?")
@@ -473,7 +484,7 @@ if page == "Today":
             connection = sqlite3.connect("teacher_ai.db")
             cursor = connection.cursor()
     
-            planning_date_text = planning_date.isoformat()
+            planning_date_text = plan_date.isoformat()
 
             cursor.execute(
                 """
@@ -494,7 +505,7 @@ if page == "Today":
                     WHERE id = ?
                     """,
                     (
-                        str(planning_day),
+                        str(plan_day),
                         "Full day",
                         "Daily teaching plan",
                         progress_status,
@@ -511,7 +522,7 @@ if page == "Today":
                     VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        str(planning_day),
+                        str(plan_day),
                         "Full day",
                         "Daily teaching plan",
                         progress_status,
@@ -548,7 +559,7 @@ if page == "Today":
                             "- Return ONLY valid JSON with exactly these keys: Maths, English, Gaeilge, SESE, Other. "
                             "Each value must be a plain string.\n\n"
                             f"EXISTING CURRENT LEARNING POSITION:\n{current_position}\n\n"
-                            f"DATE: {planning_date.isoformat()} ({planning_day})\n"
+                            f"DATE: {plan_date.isoformat()} ({plan_day})\n"
                             f"OVERALL STATUS: {progress_status}\n"
                             f"TEACHER PROGRESS NOTES:\n{progress_notes}\n"
                         )
@@ -595,10 +606,19 @@ if page == "Today":
                         "Teacher AI to update Current Learning Position automatically."
                     )
     else:
-        st.info(
-            "No lessons generated yet. Upload your planning documents "
-            "and click Generate Today's Plan."
-        )
+        if "todays_plan" in st.session_state and plan_date_text:
+            old_plan_date = date.fromisoformat(plan_date_text)
+            st.info(
+                f"The plan currently in memory is for "
+                f"{old_plan_date.strftime('%d/%m/%Y')}. "
+                f"Generate a plan for {planning_date.strftime('%d/%m/%Y')} "
+                "before saving progress for this date."
+            )
+        else:
+            st.info(
+                "No lessons generated yet. Upload your planning documents "
+                "and click Generate Today's Plan."
+            )
 
 # ---------- PROGRESS HISTORY ----------
 
