@@ -204,97 +204,97 @@ if page == "Today":
         "Which day are you planning?",
         ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
     )
-if st.button("✨ Generate Today's Plan", type="primary"):
+    if st.button("✨ Generate Today's Plan", type="primary"):
 
-    teacher_profile = st.session_state.get("teacher_profile", {})
-    planning_setup = st.session_state.get("planning_setup", {})
+        teacher_profile = st.session_state.get("teacher_profile", {})
+        planning_setup = st.session_state.get("planning_setup", {})
 
-    timetable_text = planning_setup.get("timetable_text", "")
-    monthly_plan_text = planning_setup.get("monthly_plan_text", "")
-    yearly_plan_text = planning_setup.get("yearly_plan_text", "")
+        timetable_text = planning_setup.get("timetable_text", "")
+        monthly_plan_text = planning_setup.get("monthly_plan_text", "")
+        yearly_plan_text = planning_setup.get("yearly_plan_text", "")
 
-    if not teacher_profile:
-        st.warning("Please save your Teacher Profile first.")
+        if not teacher_profile:
+            st.warning("Please save your Teacher Profile first.")
 
-    elif not monthly_plan_text:
-        st.warning("Please upload and save your Monthly Plan first.")
+        elif not monthly_plan_text:
+            st.warning("Please upload and save your Monthly Plan first.")
 
 
 
-    else:
-        with st.spinner("Teacher AI is planning your day..."):
-            try:
-                response = client.responses.create(
-                    model="gpt-5.4-mini",
-                    input=(
-                        "You are Teacher AI, an adaptive planning assistant "
-                        "for primary school teachers.\n\n"
+        else:
+            with st.spinner("Teacher AI is planning your day..."):
+                try:
+                    response = client.responses.create(
+                        model="gpt-5.4-mini",
+                        input=(
+                            "You are Teacher AI, an adaptive planning assistant "
+                            "for primary school teachers.\n\n"
 
-                        f"Your job is to create a practical teaching plan for {planning_day}. "
-                        "Use the teacher's real context below.\n\n"
+                            f"Your job is to create a practical teaching plan for {planning_day}. "
+                            "Use the teacher's real context below.\n\n"
 
-                        "PRIORITY ORDER:\n"
-                        "1. Teacher Profile\n"
-                        "2. Current Monthly Plan\n"
-                        "3. Weekly Timetable\n"
-                        "4. Yearly Plan if available\n\n"
+                            "PRIORITY ORDER:\n"
+                            "1. Teacher Profile\n"
+                            "2. Current Monthly Plan\n"
+                            "3. Weekly Timetable\n"
+                            "4. Yearly Plan if available\n\n"
 
-                        "IMPORTANT RULES:\n"
-                        f"- The day being planned is {planning_day}.\n"
-                        "- If a weekly timetable has been supplied, follow it for this day unless the teacher has explicitly provided a temporary change.\n"
-                        "- If no weekly timetable has been supplied, construct a practical timetable for the day using the Teacher Profile, recurring routines, fixed arrangements, current Monthly Plan and curriculum requirements.\n"
-                        "- When constructing a day without a weekly timetable, use the school-day start and finish times and recurring times recorded in the Teacher Profile. Treat these as real scheduling constraints.\n"
-                        "- Schedule teaching only inside the available teaching periods between those fixed routines. Never extend the day beyond the recorded school finish time or schedule a lesson across a protected break, yard, fixed lesson or tidy-up period.\n"
-                        "- Use curriculum time requirements as a guide to sensible weekly coverage, not as a requirement to teach every subject every day.\n"
-                        "- Prioritise subjects and learning that are due from the Monthly Plan, unfinished learning where known, recurring learning, and subjects that need appropriate coverage across the week.\n"
-                        "- Do not create lessons for non-teaching routines such as roll call, food breaks, yard or tidy-up. Preserve them in the timetable where they affect when teaching can occur.\n"
-                        "- If a recurring routine can legitimately contribute to curriculum provision, such as DEAR or the recorded Religion routine, account for it appropriately without unnecessarily duplicating that provision elsewhere.\n"
-                        "- When no weekly timetable exists, the resulting plan should still show practical clock times for the teaching lessons because the Teacher Profile provides the boundaries of the school day.\n"
-                        "- Use the monthly plan as the main authority for current learning.\n"
-                        "- Do not invent textbook pages, exercises or content that is not supplied.\n"
-                        "- Do not assume a PowerPoint or worksheet exists.\n"
-                        "- Lessons must stand alone without optional generated resources.\n"
-                        "- Make lessons enjoyable, active and engaging where this genuinely "
-                        "supports the learning intention.\n"
-                        "- Consider mini-games, challenges, mystery, pupil-v-teacher, "
-                        "mini-whiteboards, movement, hands-on learning, prediction, "
-                        "partner challenges and interactive-board activities where appropriate.\n"
-                        "- Do not force games or activities where straightforward teaching "
-                        "would be better.\n"
-                        "- Keep teacher-facing plans concise and easy to scan.\n"
-                        "- Avoid long teacher scripts.\n"
-                        "- Lesson phase timings must add exactly to the available lesson time.\n"
-                        "- Include differentiation based on the Teacher Profile.\n"
-                        "- Include an early-finisher activity where useful.\n"
-                        "- If information needed to plan safely is genuinely unknown, "
-                        "state the uncertainty rather than inventing it.\n\n"
+                            "IMPORTANT RULES:\n"
+                            f"- The day being planned is {planning_day}.\n"
+                            "- If a weekly timetable has been supplied, follow it for this day unless the teacher has explicitly provided a temporary change.\n"
+                            "- If no weekly timetable has been supplied, construct a practical timetable for the day using the Teacher Profile, recurring routines, fixed arrangements, current Monthly Plan and curriculum requirements.\n"
+                            "- When constructing a day without a weekly timetable, use the school-day start and finish times and recurring times recorded in the Teacher Profile. Treat these as real scheduling constraints.\n"
+                            "- Schedule teaching only inside the available teaching periods between those fixed routines. Never extend the day beyond the recorded school finish time or schedule a lesson across a protected break, yard, fixed lesson or tidy-up period.\n"
+                            "- Use curriculum time requirements as a guide to sensible weekly coverage, not as a requirement to teach every subject every day.\n"
+                            "- Prioritise subjects and learning that are due from the Monthly Plan, unfinished learning where known, recurring learning, and subjects that need appropriate coverage across the week.\n"
+                            "- Do not create lessons for non-teaching routines such as roll call, food breaks, yard or tidy-up. Preserve them in the timetable where they affect when teaching can occur.\n"
+                            "- If a recurring routine can legitimately contribute to curriculum provision, such as DEAR or the recorded Religion routine, account for it appropriately without unnecessarily duplicating that provision elsewhere.\n"
+                            "- When no weekly timetable exists, the resulting plan should still show practical clock times for the teaching lessons because the Teacher Profile provides the boundaries of the school day.\n"
+                            "- Use the monthly plan as the main authority for current learning.\n"
+                            "- Do not invent textbook pages, exercises or content that is not supplied.\n"
+                            "- Do not assume a PowerPoint or worksheet exists.\n"
+                            "- Lessons must stand alone without optional generated resources.\n"
+                            "- Make lessons enjoyable, active and engaging where this genuinely "
+                            "supports the learning intention.\n"
+                            "- Consider mini-games, challenges, mystery, pupil-v-teacher, "
+                            "mini-whiteboards, movement, hands-on learning, prediction, "
+                            "partner challenges and interactive-board activities where appropriate.\n"
+                            "- Do not force games or activities where straightforward teaching "
+                            "would be better.\n"
+                            "- Keep teacher-facing plans concise and easy to scan.\n"
+                            "- Avoid long teacher scripts.\n"
+                            "- Lesson phase timings must add exactly to the available lesson time.\n"
+                            "- Include differentiation based on the Teacher Profile.\n"
+                            "- Include an early-finisher activity where useful.\n"
+                            "- If information needed to plan safely is genuinely unknown, "
+                            "state the uncertainty rather than inventing it.\n\n"
 
-                        "FOR EACH ACTUAL TEACHING LESSON TODAY, GIVE:\n"
-                        "- Time\n"
-                        "- Subject and topic\n"
-                        "- Learning intention\n"
-                        "- Resources\n"
-                        "- A small number of timed lesson phases\n"
-                        "- Brief differentiation\n"
-                        "- Brief assessment/check for understanding\n"
-                        "- Early finisher where appropriate\n\n"
+                            "FOR EACH ACTUAL TEACHING LESSON TODAY, GIVE:\n"
+                            "- Time\n"
+                            "- Subject and topic\n"
+                            "- Learning intention\n"
+                            "- Resources\n"
+                            "- A small number of timed lesson phases\n"
+                            "- Brief differentiation\n"
+                            "- Brief assessment/check for understanding\n"
+                            "- Early finisher where appropriate\n\n"
 
-                        "Do not create lessons for breaks, lunch, yard, roll call, "
-                        "tidy-up or other non-teaching periods.\n\n"
+                            "Do not create lessons for breaks, lunch, yard, roll call, "
+                            "tidy-up or other non-teaching periods.\n\n"
 
-                        f"TEACHER PROFILE:\n{teacher_profile}\n\n"
-                        f"WEEKLY TIMETABLE:\n{timetable_text}\n\n"
-                        f"CURRENT MONTHLY PLAN:\n{monthly_plan_text}\n\n"
-                        f"YEARLY PLAN:\n{yearly_plan_text}\n\n"
+                            f"TEACHER PROFILE:\n{teacher_profile}\n\n"
+                            f"WEEKLY TIMETABLE:\n{timetable_text}\n\n"
+                            f"CURRENT MONTHLY PLAN:\n{monthly_plan_text}\n\n"
+                            f"YEARLY PLAN:\n{yearly_plan_text}\n\n"
 
-                        "Generate today's practical teaching plan now."
+                            "Generate today's practical teaching plan now."
+                        )
                     )
-                )
 
-                st.session_state["todays_plan"] = response.output_text
+                    st.session_state["todays_plan"] = response.output_text
 
-            except Exception as e:
-                st.error(f"Teacher AI error: {e}")
+                except Exception as e:
+                    st.error(f"Teacher AI error: {e}")
 
     st.subheader("Lessons")
 
@@ -325,7 +325,7 @@ if st.button("✨ Generate Today's Plan", type="primary"):
                 VALUES (?, ?, ?, ?, ?)
                 """,
                 (
-                    str(planning_date),
+                    str(planning_day),
                     "Full day",
                     "Daily teaching plan",
                     progress_status,
