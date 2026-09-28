@@ -5,6 +5,7 @@ from pypdf import PdfReader
 from docx import Document
 import sqlite3
 import json
+from datetime import date, timedelta
 
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
@@ -40,6 +41,12 @@ def init_database():
             position_data TEXT NOT NULL
         )
     """)
+    # V0 migration: attach a real school date to progress records.
+    cursor.execute("PRAGMA table_info(actual_progress)")
+    progress_columns = [row[1] for row in cursor.fetchall()]
+    if "planning_date" not in progress_columns:
+        cursor.execute("ALTER TABLE actual_progress ADD COLUMN planning_date TEXT")
+
     connection.commit()
     connection.close()
 
@@ -145,9 +152,9 @@ def load_recent_progress(limit=10):
     cursor = connection.cursor()
     cursor.execute(
         """
-        SELECT planning_day, subject, lesson_topic, status, notes
+        SELECT planning_day, subject, lesson_topic, status, notes, planning_date
         FROM actual_progress
-        ORDER BY id DESC
+        ORDER BY COALESCE(planning_date, '') DESC, id DESC
         LIMIT ?
         """,
         (limit,)
@@ -160,7 +167,8 @@ def load_recent_progress(limit=10):
             "subject": row[1],
             "lesson_topic": row[2],
             "status": row[3],
-            "notes": row[4]
+            "notes": row[4],
+            "planning_date": row[5]
         }
         for row in rows
     ]
@@ -260,10 +268,16 @@ if page == "Today":
         "Your teaching day will appear here based on your timetable, "
         "plans and actual classroom progress."
     )
-    planning_day = st.selectbox(
-        "Which day are you planning?",
-        ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+    default_date = date.today()
+    planning_date = st.date_input(
+        "Which school date are you planning?",
+        value=default_date
     )
+    planning_day = planning_date.strftime("%A")
+    st.caption(f"Planning for **{planning_day}, {planning_date.strftime('%d %B %Y')}**")
+
+    if planning_day in ["Saturday", "Sunday"]:
+        st.warning("This date falls on a weekend. Choose a school day unless you intentionally want to plan for it.")
     if st.button("✨ Generate Today's Plan", type="primary"):
 
         teacher_profile = st.session_state.get("teacher_profile", {})
@@ -293,7 +307,7 @@ if page == "Today":
                             "You are Teacher AI, an adaptive planning assistant "
                             "for primary school teachers.\n\n"
 
-                            f"Your job is to create a practical teaching plan for {planning_day}. "
+                            f"Your job is to create a practical teaching plan for {planning_day}, {planning_date.isoformat()}. "
                             "Use the teacher's real context below.\n\n"
 
                             "PRIORITY ORDER:\n"
@@ -401,20 +415,53 @@ if page == "Today":
             connection = sqlite3.connect("teacher_ai.db")
             cursor = connection.cursor()
     
+            planning_date_text = planning_date.isoformat()
+
             cursor.execute(
                 """
-                INSERT INTO actual_progress
-                (planning_day, subject, lesson_topic, status, notes)
-                VALUES (?, ?, ?, ?, ?)
+                SELECT id FROM actual_progress
+                WHERE planning_date = ?
+                ORDER BY id DESC
+                LIMIT 1
                 """,
-                (
-                    str(planning_day),
-                    "Full day",
-                    "Daily teaching plan",
-                    progress_status,
-                    progress_notes
-                )
+                (planning_date_text,)
             )
+            existing_progress = cursor.fetchone()
+
+            if existing_progress:
+                cursor.execute(
+                    """
+                    UPDATE actual_progress
+                    SET planning_day = ?, subject = ?, lesson_topic = ?, status = ?, notes = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        str(planning_day),
+                        "Full day",
+                        "Daily teaching plan",
+                        progress_status,
+                        progress_notes,
+                        existing_progress[0]
+                    )
+                )
+                progress_was_updated = True
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO actual_progress
+                    (planning_day, subject, lesson_topic, status, notes, planning_date)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(planning_day),
+                        "Full day",
+                        "Daily teaching plan",
+                        progress_status,
+                        progress_notes,
+                        planning_date_text
+                    )
+                )
+                progress_was_updated = False
     
             connection.commit()
             connection.close()
@@ -443,7 +490,7 @@ if page == "Today":
                             "- Return ONLY valid JSON with exactly these keys: Maths, English, Gaeilge, SESE, Other. "
                             "Each value must be a plain string.\n\n"
                             f"EXISTING CURRENT LEARNING POSITION:\n{current_position}\n\n"
-                            f"DAY: {planning_day}\n"
+                            f"DATE: {planning_date.isoformat()} ({planning_day})\n"
                             f"OVERALL STATUS: {progress_status}\n"
                             f"TEACHER PROGRESS NOTES:\n{progress_notes}\n"
                         )
@@ -459,9 +506,14 @@ if page == "Today":
                     ):
                         st.session_state["current_learning_position"] = updated_position
                         save_current_learning_position(updated_position)
-                        st.success(
-                            "Today's progress saved and Current Learning Position updated."
-                        )
+                        if progress_was_updated:
+                            st.success(
+                                "Progress for this date was updated and Current Learning Position refreshed."
+                            )
+                        else:
+                            st.success(
+                                "Today's progress saved and Current Learning Position updated."
+                            )
                     else:
                         st.warning(
                             "Today's progress was saved, but the Current Learning Position "
@@ -474,10 +526,16 @@ if page == "Today":
                         "could not be updated automatically."
                     )
             else:
-                st.success(
-                    "Today's progress saved. Add a short note next time if you want "
-                    "Teacher AI to update Current Learning Position automatically."
-                )
+                if progress_was_updated:
+                    st.success(
+                        "Progress for this date was updated. Add a short note if you want "
+                        "Teacher AI to update Current Learning Position automatically."
+                    )
+                else:
+                    st.success(
+                        "Today's progress saved. Add a short note next time if you want "
+                        "Teacher AI to update Current Learning Position automatically."
+                    )
     else:
         st.info(
             "No lessons generated yet. Upload your planning documents "
