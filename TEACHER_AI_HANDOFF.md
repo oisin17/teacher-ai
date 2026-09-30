@@ -215,15 +215,30 @@ Teachers should always be able to edit individual timetable items.
 
 ## 6. Current app architecture
 
-The current prototype is a single Streamlit app in `streamlit_app.py`.
+**Updated 2026-09-30 after the durable-persistence rollout.**
+
+The existing UI and adaptive logic remain in `streamlit_app.py`. Database operations
+now live in `persistence.py` and use managed PostgreSQL (the owner approved Neon
+Free, in Frankfurt). The server-side `DATABASE_URL` is configured in Streamlit
+Secrets alongside `OPENAI_API_KEY`; never put either value in this repository.
 
 Dependencies currently listed in `requirements.txt`:
-- streamlit
+- streamlit==1.64.0 (the version tested locally and on the deployed app)
 - openai
 - pypdf
 - python-docx
+- psycopg[binary]>=3.2,<4
 
-The app currently uses a local SQLite database at `teacher_ai.db`.
+PostgreSQL is the sole production source for all four persistent data areas.
+There is no SQLite fallback when PostgreSQL is unavailable. Short-lived TLS
+connections, transactions and a single-teacher advisory write lock protect
+saves and date corrections. Session state is updated only after a confirmed
+database save.
+
+The historical local `teacher_ai.db` is only a migration input. An available
+legacy database is imported atomically into an empty PostgreSQL destination
+once; migration never overwrites newer durable edits. The migration marker
+lives in `storage_migrations`.
 
 Tables/functions currently exist for:
 - Teacher Profile
@@ -242,7 +257,7 @@ Relevant persistence helpers currently in the code include:
 
 On app startup, the app loads profile/planning/current-learning data into `st.session_state` if those keys do not already exist.
 
-## 7. Important known persistence problem
+## 7. Historical persistence problem — resolved 2026-09-30
 
 Although Teacher Profile and Planning Setup are already written to SQLite, the SQLite file is local to the Streamlit runtime.
 
@@ -252,7 +267,7 @@ A recent deployment/restart caused the saved Teacher Profile / Planning Setup to
 
 This indicates that local SQLite on the deployment is not adequate as durable persistent storage across Streamlit redeployments/restarts.
 
-**This is the current highest-priority engineering task.**
+**This problem is now resolved on the deployed app.** The following describes the original failure.
 
 Do not "solve" this by asking the teacher to re-enter data after deployment.
 
@@ -418,7 +433,10 @@ The owner should primarily make product/teaching decisions, not perform repetiti
 
 ## 15. Current priority order
 
-### Priority 1 — Durable persistence
+### Priority 1 — Durable persistence — completed 2026-09-30
+
+Implemented and deployed through PR #1. See section 18 for verification and remaining scope.
+
 Make Teacher Profile, Planning Setup, Current Learning Position and Actual Progress survive Streamlit restarts/redeployments.
 
 Then explicitly test:
@@ -453,6 +471,10 @@ Incorporate placement feedback and have the V1 ready by February 2027.
 
 ## 16. First task for a new Work session
 
+**Updated:** Priority 1 is completed. Inspect the current code and section 18,
+then continue with Priority 2 (quick subject/lesson-level progress). The original
+persistence brief below is retained as acceptance context, not an outstanding task.
+
 Start by inspecting `streamlit_app.py` and the current persistence helpers.
 
 Confirm the cause of data loss across Streamlit redeployments, then propose and implement the smallest durable persistence solution appropriate for the prototype.
@@ -477,3 +499,56 @@ The next milestone is complete when:
 - the next day's plan still adapts correctly
 
 Do not move on to major new features until this foundation is reliable.
+
+
+## 18. Durable persistence rollout and verification — 2026-09-30
+
+- PR #1 (`codex/durable-persistence`) was merged at
+  `7df71b22095b961a1583d7fbca8067730a818449`.
+- Streamlit was pinned to its already-running/tested version 1.64.0 at
+  `327ff008597f6620eef9f58f71c7f07f6a0769fd`, exercising another redeployment.
+- A pre-cutover JSON backup was downloaded from the working deployed SQLite app.
+  It contains all three saved context documents and every Actual Progress row.
+  Classroom data and credentials were not committed to GitHub.
+- The deployed PostgreSQL export matched that backup exactly after cutover.
+- Live saves were checked for Teacher Profile, Planning Setup, Current Learning
+  Position and the existing dated Actual Progress record. The existing status
+  and teacher notes were reused; no fictional new teaching record was created.
+- Saving Planning Setup with no new uploads retained all existing document text.
+  Unreadable replacement uploads now leave saved documents untouched.
+- A generated plan remained visible when the progress radio changed.
+- Saving the existing progress notes reported a successful Current Learning
+  update. The next-day plan explicitly continued unfinished English and restored
+  Gaeilge missed because of assembly; its Maths planning recognised previous
+  completion. The AI prompts and model were not rewritten in this rollout.
+- The teacher-confirmed Current Learning values were returned to their original
+  saved values after the update test.
+- Refresh, separate browser sessions and the subsequent dependency redeployment
+  were tested. The final exported JSON matched the pre-cutover backup exactly
+  across all four data areas.
+- 14 local storage/Streamlit AppTest checks passed. GitHub Actions passed the
+  same suite plus 10 storage checks against PostgreSQL 16, including concurrency,
+  migration rollback, backup roundtrip and overwrite refusal.
+- CI runs on pushes and pull requests using a disposable local PostgreSQL
+  service. Test credentials are not production credentials.
+
+### Backup and recovery
+
+The deployed app has **Saved data backup** export and restore controls.
+Restore validates the entire backup, writes atomically and refuses to overwrite
+any nonempty durable database. If automatic legacy migration cannot access
+SQLite after a restart, a downloaded backup can restore an empty database.
+See `PERSISTENCE_SETUP.md` for the rollout/recovery instructions.
+
+### Scope and remaining work
+
+- This remains the existing single-teacher prototype. All sessions access one
+  teacher's saved data; no authentication or multi-user system was added.
+- Generated Today's Plan text remains session-based, as in the original app.
+  The four requested context/progress areas are durable.
+- Local AppTest uses mocked AI responses; live generation/update were separately
+  exercised through the deployed app.
+- Persistence does not resolve coarse whole-day progress or guarantee every
+  generated lesson's quality/timing. Continue with the Current Priority Order.
+- Neon Free is the selected prototype service; no paid upgrade was made.
+  Provider limits and backup retention still need review before a production launch.
