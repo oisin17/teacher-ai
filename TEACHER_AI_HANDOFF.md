@@ -1,0 +1,479 @@
+# Teacher AI — Development Handoff
+
+**Repository:** `oisin17/teacher-ai`  
+**Current deployment:** Streamlit prototype (currently used through `teacher-ai-oisin.streamlit.app`)  
+**Handoff date:** 2026-09-30  
+**Target:** testable V1 by February 2027, with real classroom/placement testing beginning in January 2027.
+
+## 1. Product vision
+
+Teacher AI is an adaptive planning assistant for primary-school teachers.
+
+The core idea is not simply "generate a lesson plan." Teacher AI should maintain an evolving understanding of the teacher, class, curriculum/plans, timetable constraints, available resources, and what actually happened in class. It should then use that information to generate the next useful plan.
+
+The intended loop is:
+
+1. Teacher sets up profile, programmes/resources, timetable and planning documents.
+2. Teacher AI generates the day's plan.
+3. Teacher teaches.
+4. Teacher records what actually happened.
+5. Teacher AI updates the class's Current Learning Position.
+6. The next plan adapts to that reality.
+
+The current prototype has now successfully demonstrated this loop at a basic level.
+
+## 2. Product principles
+
+### Teacher control
+The teacher is always in control. AI should make useful planning decisions, but teachers must be able to amend any timetable item, lesson, resource or assumption and ask the AI to redo a specific part for a stated reason.
+
+### Plan from evidence, not invention
+Teacher-confirmed information is stronger than inferred information.
+
+Priority of evidence should generally be:
+
+1. Newer teacher-entered Actual Progress / explicit corrections
+2. Teacher-confirmed Current Learning Position
+3. Monthly plan
+4. Yearly plan
+5. General curriculum/programme knowledge
+
+The monthly plan is intended coverage, not proof that learning has happened.
+
+Never invent textbook page numbers, exercise numbers, story names, chapters or specific programme content that has not been supplied or made available.
+
+### Adaptive, not repetitive
+A completed lesson does not mean a whole subject/topic/unit is complete. Core recurring subjects should continue progressing.
+
+Partially completed learning should sensibly continue or be revisited.
+
+Learning that was not taught should remain outstanding and be rescheduled where appropriate.
+
+Do not restart learning already known to be complete.
+
+If the exact next focus is genuinely uncertain, use a short diagnostic/retrieval step rather than inventing certainty.
+
+### Practical teacher UX
+Plans should be concise, scannable and usable during a real school day. Avoid long scripts.
+
+Prefer engaging, practical, low-preparation lessons where appropriate, but do not force games into every lesson.
+
+Differentiation should be built into the lesson rather than appended as generic boilerplate.
+
+## 3. Teacher/class context used for prototype testing
+
+The prototype is currently being tested with a mainstream 5th Class of 27 pupils in an Irish primary-school setting.
+
+Typical school day constraints:
+
+- 08:50–09:10 Work It Out / morning work while roll is taken
+- 09:10–approx. 09:20 Work It Out correction
+- approx. 09:20 Morning Meeting
+- 10:45–11:00 Lunch
+- 11:00–11:15 Yard
+- 12:30–12:45 Lunch
+- 12:45–13:05 Yard
+- 13:05–13:20 DEAR
+- 14:20–14:30 Pack up / tidy up
+- School finishes 14:30
+
+Weekly fixed constraints currently used:
+
+- Wednesday 11:45–12:15 Sport
+- Friday 11:15–11:45 Sport
+- Friday afternoon Art
+
+These should be protected as real scheduling constraints.
+
+## 4. Teacher Profile structure
+
+The current Teacher Profile UI has these fields:
+
+- Class
+- Books & Programmes
+- Classroom Resources
+- Teaching Style
+- Differentiation & Additional Needs
+- Recurring Classroom Arrangements
+
+The current prototype profile includes the following useful defaults/context.
+
+### Books & Programmes
+
+**Maths**
+- Planet Maths — 5th Class
+- Work It Out — 5th Class
+- Times Tables Rock Stars
+- Daily 10
+- Work It Out is generally used as morning Maths practice
+
+**English**
+- Reading Zone — 5th Class
+- Explore With Me — 5th Class
+- Class novels where relevant
+- Explicit morphology and spelling instruction
+- RACE strategy for comprehension responses
+
+**Gaeilge**
+- Abair Liom — 5th Class
+- Am Don Léamh
+
+**SESE**
+- Explore With Me — 5th Class
+- Teacher-selected online and supplementary resources
+
+Digital/online versions of core programmes may be available on the teacher laptop and projected to the interactive touchscreen.
+
+Teacher AI should use the Monthly Plan and Current Learning Position to determine relevant programme content.
+
+### Classroom Resources
+
+Typical available resources:
+- teacher laptop
+- interactive touchscreen/whiteboard
+- internet
+- digital versions of core programmes where available
+- mini-whiteboards / pupil whiteboards
+- whiteboard markers
+- dice
+- counters
+- playing cards
+- number resources/manipulatives
+- classroom library/books
+- standard stationery/art materials
+- printer/photocopier
+- projectable online resources
+
+Prefer little/no preparation or printing where possible.
+
+### Teaching Style
+
+Preferred characteristics:
+- engaging
+- active
+- practical
+- enjoyable with a clear learning purpose
+- mini-whiteboards
+- pupil-vs-teacher
+- partner challenges
+- short games
+- quizzes
+- movement
+- mystery/problem-solving
+- hands-on learning
+- prediction
+- discussion
+- collaborative tasks
+- interactive whiteboard use
+- short competitions
+- retrieval
+- real-life contexts
+
+Teacher-facing plans should be concise and practical.
+
+### Differentiation
+
+Support can include:
+- worked examples
+- reduced task quantity
+- smaller instruction steps
+- concrete materials
+- visual supports
+- vocabulary support
+- sentence starters
+- partner/teacher support
+- extra modelling
+- simplified starting points
+- extra processing time
+
+Challenge can include:
+- reasoning
+- explaining/proving
+- unfamiliar applications
+- independent challenges
+- open-ended problems
+- higher-order questioning
+- meaningful early-finisher tasks
+
+Do not simply give faster pupils more of the same work.
+
+## 5. Planning hierarchy
+
+Teacher AI should support both a monthly plan and an optional yearly plan.
+
+- The **yearly plan** provides broad long-term direction, sequencing and coverage.
+- The **monthly plan** should dominate day-to-day/monthly planning when present.
+- The yearly plan should mainly act as background context, sequencing/coverage check, and a way to flag gaps or conflicts.
+- It should not override a more specific monthly plan without a clear reason.
+
+Teacher AI should eventually support two timetable modes:
+
+1. Teacher uploads/creates their own subject timetable.
+2. Teacher AI constructs a timetable using curriculum allocations plus fixed teacher constraints.
+
+Teachers should always be able to edit individual timetable items.
+
+## 6. Current app architecture
+
+The current prototype is a single Streamlit app in `streamlit_app.py`.
+
+Dependencies currently listed in `requirements.txt`:
+- streamlit
+- openai
+- pypdf
+- python-docx
+
+The app currently uses a local SQLite database at `teacher_ai.db`.
+
+Tables/functions currently exist for:
+- Teacher Profile
+- Planning Setup
+- Actual Progress
+- Current Learning Position
+
+Relevant persistence helpers currently in the code include:
+- `save_teacher_profile(...)`
+- `load_teacher_profile()`
+- `save_planning_setup(...)`
+- `load_planning_setup()`
+- `save_current_learning_position(...)`
+- `load_current_learning_position()`
+- recent progress loading from `actual_progress`
+
+On app startup, the app loads profile/planning/current-learning data into `st.session_state` if those keys do not already exist.
+
+## 7. Important known persistence problem
+
+Although Teacher Profile and Planning Setup are already written to SQLite, the SQLite file is local to the Streamlit runtime.
+
+A recent deployment/restart caused the saved Teacher Profile / Planning Setup to disappear and the app said:
+
+> Please save your Teacher Profile first.
+
+This indicates that local SQLite on the deployment is not adequate as durable persistent storage across Streamlit redeployments/restarts.
+
+**This is the current highest-priority engineering task.**
+
+Do not "solve" this by asking the teacher to re-enter data after deployment.
+
+The durable solution should preserve:
+- Teacher Profile
+- Planning Setup
+- Current Learning Position
+- Actual Progress
+
+across refreshes, sessions, app restarts and deployments.
+
+Choose the simplest robust architecture for the current stage. Avoid adding unnecessary infrastructure. If an external paid/account-based database service is required, explain the choice and any cost/setup implications before locking the project into it.
+
+## 8. Today's Plan — current working behaviour
+
+The Today page allows the teacher to choose a school date and generate a daily plan.
+
+A recent bug occurred where interacting with the progress radio reran the Streamlit page and the generated plan disappeared.
+
+That was fixed by persisting the planning date in session state:
+
+```python
+if "planning_date" not in st.session_state:
+    st.session_state["planning_date"] = date.today()
+
+planning_date = st.date_input(
+    "Which school date are you planning?",
+    key="planning_date",
+    format="DD/MM/YYYY"
+)
+```
+
+The fix was committed on main as:
+
+`636581b8d39b06da9fbff89ac731bc2d0b9327a8`
+
+Commit message:
+`Preserve planning date across progress widget reruns`
+
+The plan remains protected by a date-match guard so a plan for one date is not incorrectly displayed under another date.
+
+## 9. Current progress/adaptive loop
+
+After a generated plan is displayed, the teacher can currently choose an overall progress status:
+
+- Completed
+- Partially completed
+- Not taught
+
+and optionally enter notes describing what actually happened.
+
+On Save Today's Progress:
+- the app inserts/updates a row in `actual_progress`
+- the current implementation stores the record as a "Full day" / "Daily teaching plan" record
+- if notes are present, AI updates the Current Learning Position conservatively
+
+The Current Learning Position is organised by:
+- Maths
+- English
+- Gaeilge
+- SESE
+- Other
+
+Rules already encoded in the update prompt include:
+- teacher progress notes are authoritative
+- preserve existing information not changed by the notes
+- do not invent stopping points, textbook pages or concepts
+- "Completed" means the specific lesson/day, not the whole topic/unit
+- partial completion records only what is safely known
+- not taught due to interruption stays outstanding
+- do not infer pupil difficulty unless the teacher states it
+
+## 10. Adaptive loop test already passed
+
+A test progress note stated:
+
+> Maths was fully completed. English was partially completed and we did not finish the final activity. Gaeilge was not taught because we had an assembly.
+
+The saved Current Learning Position correctly became approximately:
+
+- Maths: Fully completed today.
+- English: Partially completed today; the final activity was not finished.
+- Gaeilge: Not taught today due to assembly.
+
+The next day's generated plan then behaved correctly at a basic level:
+
+- English explicitly continued the unfinished activity.
+- Maths recognised that the previous lesson was completed and moved forward rather than restarting.
+- Gaeilge recognised that the prior lesson had not been taught and restored/rescheduled it.
+
+This demonstrates that the core:
+
+**Plan → Teach → Record reality → Update learning position → Adapt next plan**
+
+loop works.
+
+## 11. Known limitation of progress tracking
+
+The current single overall daily progress radio is too coarse for a mature V1.
+
+For example, "Maths fully completed today" does not tell the system exactly what Maths learning was completed.
+
+The eventual design should support more precise lesson/subject-level progress, while remaining extremely quick for teachers to complete.
+
+Likely direction:
+- each planned lesson can have a simple Completed / Partial / Not taught state
+- optional short note per lesson
+- one-click defaults / bulk completion where useful
+- AI can infer a more precise Current Learning Position from the actual lesson content plus teacher correction
+- teacher can always override the inferred position
+
+Do not overcomplicate this before durable persistence is fixed.
+
+## 12. Current planning-generation rules
+
+The plan-generation prompt already receives:
+- Teacher Profile
+- Planning Setup
+- timetable text
+- monthly plan text
+- yearly plan text
+- Current Learning Position
+- recent Actual Progress
+
+Important existing rules include:
+- Current Learning Position and newer Actual Progress override monthly-plan assumptions
+- completed specific lesson != whole subject/topic complete
+- Maths/English/Gaeilge should continue progressing
+- partial work should continue/revisit
+- not-taught work should be rescheduled where appropriate
+- do not restart known-completed learning
+- if next focus is uncertain, use a brief diagnostic/retrieval step instead of fabricating specifics
+- monthly plan is intended coverage, not proof of learning
+- teacher-confirmed Current Learning is strong evidence unless newer progress updates it
+- perform a final validation against Current Learning Position before returning the plan
+
+## 13. What not to do
+
+- Do not rebuild working features from scratch without a reason.
+- Do not replace working adaptive logic simply for architectural neatness.
+- Do not make large speculative refactors while a smaller safe change will solve the current issue.
+- Do not invent programme pages/content.
+- Do not make the teacher copy/paste code as part of the normal development workflow.
+- Do not rely on Streamlit session state as durable data storage.
+- Do not treat an overall "Completed" status as meaning an entire curriculum topic is finished.
+- Do not polish visual design ahead of core reliability.
+- Do not add authentication/multi-user complexity before it is required for the next test milestone.
+
+## 14. Preferred development workflow
+
+The owner is a working primary teacher and product owner.
+
+For development:
+
+1. Inspect the existing repository first.
+2. Preserve working behaviour.
+3. Make small, safe commits.
+4. Test the deployed Streamlit app after meaningful changes when browser access is available.
+5. Diagnose and retest rather than asking the owner to shuttle code back and forth.
+6. Ask the owner for a manual test only when teacher judgement, credentials, permissions or genuinely human acceptance testing is needed.
+
+The owner should primarily make product/teaching decisions, not perform repetitive developer plumbing.
+
+## 15. Current priority order
+
+### Priority 1 — Durable persistence
+Make Teacher Profile, Planning Setup, Current Learning Position and Actual Progress survive Streamlit restarts/redeployments.
+
+Then explicitly test:
+- enter/save profile
+- enter/save planning setup
+- enter/save current learning
+- save progress
+- refresh
+- start a new session if possible
+- redeploy/restart
+- verify all data remains
+
+### Priority 2 — Better progress granularity
+Move from one whole-day status toward quick subject/lesson-level progress without making end-of-day admin burdensome.
+
+### Priority 3 — Planning quality
+Improve specificity of next-step planning once the system knows exactly what was completed.
+
+Avoid vague output such as "likely focus" when sufficient evidence exists.
+
+### Priority 4 — Resource generation
+Allow generated lessons to produce useful teacher/pupil resources with the same class context and minimal preparation.
+
+### Priority 5 — UX/reliability
+Reduce friction, handle errors cleanly, preserve state correctly, and make the product feel dependable.
+
+### Priority 6 — January placement testing
+Have a stable V1 ready for a placement teacher to use in January 2027 and collect teacher/inspector feedback.
+
+### Priority 7 — February V1
+Incorporate placement feedback and have the V1 ready by February 2027.
+
+## 16. First task for a new Work session
+
+Start by inspecting `streamlit_app.py` and the current persistence helpers.
+
+Confirm the cause of data loss across Streamlit redeployments, then propose and implement the smallest durable persistence solution appropriate for the prototype.
+
+Preserve all currently working Today-plan/adaptive-loop behaviour.
+
+Before adding external infrastructure that requires a new account, paid service, secret or irreversible architectural commitment, explain what is needed to the owner.
+
+After implementation, test the persistence behaviour through the deployed app as far as browser access allows.
+
+## 17. Definition of success for the next milestone
+
+The next milestone is complete when:
+
+- Teacher Profile survives refresh/restart/redeploy
+- Planning Setup survives refresh/restart/redeploy
+- Current Learning Position survives refresh/restart/redeploy
+- Actual Progress survives refresh/restart/redeploy
+- generating Today's Plan still works
+- changing the progress radio does not make the plan disappear
+- saving progress still updates Current Learning Position
+- the next day's plan still adapts correctly
+
+Do not move on to major new features until this foundation is reliable.
