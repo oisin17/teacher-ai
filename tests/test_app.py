@@ -121,6 +121,14 @@ class AppTests(unittest.TestCase):
             self.assertEqual(selected["source_filename"], "December_2026.docx")
             self.assertEqual(selected["start_date"], "2026-11-01")
             self.assertIsNone(self.store.select_monthly_plan("2026-12-01"))
+            self.client.responses.create.return_value = SimpleNamespace(output_text=generation_output())
+            self.navigate(app, "Today")
+            app.date_input[0].set_value(date(2026, 11, 2)).run()
+            self.button(app, "✨ Generate Today's Plan").click().run()
+            self.assertEqual(len(app.exception), 0)
+            saved = self.store.load_day("2026-11-02")["plan"]
+            self.assertEqual(saved["monthly_plan"]["id"], selected["id"])
+            self.assertIn("English narrative openings", str(self.client.responses.create.call_args))
 
     def test_adaptive_loop_and_plan_survives_radio_rerun_and_fresh_session(self):
         app = self.generated_app()

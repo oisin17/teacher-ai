@@ -6,6 +6,12 @@ from uuid import uuid4
 from monthly_plans import suggest_dates
 from pypdf import PdfReader
 from docx import Document
+import importlib
+import persistence
+# Streamlit hot reload can retain the previous imported storage module.
+# Reload only when that cached module lacks this rollout's additive API.
+if not hasattr(persistence.Store, "select_monthly_plan"):
+    importlib.reload(persistence)
 from persistence import Store, StorageError
 import json
 from datetime import date, timedelta
