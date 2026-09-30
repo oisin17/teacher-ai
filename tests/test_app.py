@@ -31,6 +31,10 @@ class AppTests(unittest.TestCase):
             "yearly_plan_text": "5th Class yearly sequence",
         }
         self.store.save_document("planning_setup", self.setup)
+        for month, end in ((9, 30), (10, 31)):
+            self.store.save_monthly_plan({"id": str(month), "title": date(2026, month, 1).strftime("%B %Y Monthly Plan"),
+                "source_filename": "misleading.docx", "plan_text": self.setup["monthly_plan_text"] + str(month),
+                "start_date": f"2026-{month:02}-01", "end_date": f"2026-{month:02}-{end}"}, True)
         self.store.save_document("current_learning_position", {"Maths": "Addition completed"})
         self.client = Mock()
         self.ai_patch = patch("openai.OpenAI", return_value=self.client)
@@ -67,6 +71,56 @@ class AppTests(unittest.TestCase):
         self.assertEqual(len(app.exception), 0)
         self.assertEqual(len(app.error), 0)
         return app
+
+    def test_month_boundary_and_missing_month_use_only_confirmed_dates(self):
+        self.client.responses.create.return_value = SimpleNamespace(output_text=generation_output())
+        app = self.new_app()
+        for selected, month in ((date(2026, 9, 30), "September"), (date(2026, 10, 1), "October")):
+            app.date_input[0].set_value(selected).run()
+            self.assertIn(f"Using {month} 2026 Monthly Plan.", [i.value for i in app.info])
+            self.button(app, "✨ Generate Today's Plan").click().run()
+            prompt = str(self.client.responses.create.call_args)
+            self.assertIn(self.setup["monthly_plan_text"] + str(selected.month), prompt)
+            saved = self.store.load_day(selected.isoformat())["plan"]
+            self.assertEqual(saved["monthly_plan"]["id"], str(selected.month))
+        calls = self.client.responses.create.call_count
+        app.date_input[0].set_value(date(2026, 11, 2)).run()
+        self.assertTrue(self.button(app, "✨ Generate Today's Plan").disabled)
+        self.assertEqual(self.client.responses.create.call_count, calls)
+
+    def test_upload_suggestion_requires_confirmation_and_can_be_corrected(self):
+        import io
+        from docx import Document
+        doc = Document()
+        doc.add_paragraph("November 2026 Monthly Plan: English narrative openings")
+        upload = io.BytesIO()
+        doc.save(upload)
+        upload.name = "December_2026.docx"
+        real_uploader = st.file_uploader
+        def uploader(label, *args, **kwargs):
+            if label == "Upload Monthly Plan (PDF or Word)":
+                upload.seek(0)
+                return upload
+            return real_uploader(label, *args, **kwargs)
+        with patch("streamlit.file_uploader", side_effect=uploader):
+            app = self.new_app()
+            self.navigate(app, "Planning Setup")
+            self.assertIn("Conflicting date suggestions", " ".join(c.value for c in app.caption))
+            for widget in app.date_input:
+                if widget.label == "Monthly Plan start date":
+                    widget.set_value(date(2026, 11, 1))
+                elif widget.label == "Monthly Plan end date":
+                    widget.set_value(date(2026, 11, 30))
+            self.button(app, "Save confirmed Monthly Plan").click().run()
+            self.assertEqual(len(self.store.list_monthly_plans()), 2)
+            self.assertTrue(any("Confirm valid" in e.value for e in app.error))
+            next(c for c in app.checkbox if c.label.startswith("I confirm")).check()
+            self.button(app, "Save confirmed Monthly Plan").click().run()
+            self.assertEqual(len(app.exception), 0)
+            selected = self.store.select_monthly_plan("2026-11-01")
+            self.assertEqual(selected["source_filename"], "December_2026.docx")
+            self.assertEqual(selected["start_date"], "2026-11-01")
+            self.assertIsNone(self.store.select_monthly_plan("2026-12-01"))
 
     def test_adaptive_loop_and_plan_survives_radio_rerun_and_fresh_session(self):
         app = self.generated_app()

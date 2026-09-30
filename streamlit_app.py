@@ -1,6 +1,9 @@
 import streamlit as st
 from openai import OpenAI
 import io
+import hashlib
+from uuid import uuid4
+from monthly_plans import suggest_dates
 from pypdf import PdfReader
 from docx import Document
 from persistence import Store, StorageError
@@ -36,7 +39,7 @@ def initialise_storage(database_url, schema_version):
     Store(database_url).initialise()
 
 
-storage_call(initialise_storage, st.secrets.get("DATABASE_URL", ""), 2)
+storage_call(initialise_storage, st.secrets.get("DATABASE_URL", ""), 3)
 
 
 def save_teacher_profile(profile):
@@ -254,16 +257,22 @@ if page == "Today":
 
     if planning_day in ["Saturday", "Sunday"]:
         st.warning("This date falls on a weekend. Choose a school day unless you intentionally want to plan for it.")
+    selected_monthly = storage_call(store.select_monthly_plan, planning_date.isoformat())
+    if selected_monthly:
+        st.info(f"Using {selected_monthly['title']}.")
+        st.caption(f"Confirmed coverage: {selected_monthly['start_date']} to {selected_monthly['end_date']}")
+    else:
+        st.warning("No confirmed Monthly Plan covers this date. Upload or confirm its dates in Planning Setup before generating.")
     day_state = storage_call(store.load_day, planning_date.isoformat())
     if day_state["progress"]:
         st.caption("Progress is already saved for this date. You can update it below or in Progress History.")
-    if st.button("✨ Generate Today's Plan", type="primary", disabled=day_state["progress"] is not None):
+    if st.button("✨ Generate Today's Plan", type="primary", disabled=day_state["progress"] is not None or selected_monthly is None):
 
         teacher_profile = st.session_state.get("teacher_profile", {})
-        planning_setup = st.session_state.get("planning_setup", {})
+        planning_setup = storage_call(store.load_document, "planning_setup")
 
         timetable_text = planning_setup.get("timetable_text", "")
-        monthly_plan_text = planning_setup.get("monthly_plan_text", "")
+        monthly_plan_text = selected_monthly["plan_text"] if selected_monthly else ""
         yearly_plan_text = planning_setup.get("yearly_plan_text", "")
 
         if not teacher_profile:
@@ -383,6 +392,7 @@ if page == "Today":
                     )
 
                     generated_plan = parse_generated_plan(response.output_text, planning_date.isoformat())
+                    generated_plan["monthly_plan"] = {key: selected_monthly[key] for key in ("id", "title", "start_date", "end_date")}
                     storage_call(store.save_day_plan, generated_plan)
                     day_state = {"plan": generated_plan, "progress": None}
                     st.session_state["todays_plan"] = plan_markdown(generated_plan)
@@ -396,6 +406,11 @@ if page == "Today":
 
     saved_plan = day_state["plan"]
     if saved_plan:
+        provenance = day_state["plan"].get("monthly_plan") if day_state["plan"] else None
+        if provenance:
+            st.caption(f"Saved day plan generated using: {provenance['title']} ({provenance['start_date']} to {provenance['end_date']}).")
+        else:
+            st.caption("This saved day plan predates dated Monthly Plans; its original monthly source was not recorded.")
         st.caption(f"Generated for **{planning_day}, {planning_date.strftime('%d/%m/%Y')}**")
         st.markdown(plan_markdown(saved_plan))
         st.divider()
@@ -826,16 +841,51 @@ elif page == "Planning Setup":
         type=["pdf", "docx", "xlsx", "png", "jpg", "jpeg"]
     )
 
-    st.subheader("Monthly Plan")
-
-    monthly_plan = st.file_uploader(
-        "Upload current monthly plan",
-        type=["pdf", "docx"]
-    )
+    st.subheader("Monthly Plans")
+    st.caption("Save each month's plan separately. Only dates you explicitly confirm control selection.")
     saved_planning = st.session_state.get("planning_setup", {})
-
-    if saved_planning.get("monthly_plan_text"):
-        st.success("✓ Monthly Plan saved")
+    monthly_items = storage_call(store.list_monthly_plans)
+    for item in monthly_items:
+        coverage = f"{item['start_date']} to {item['end_date']}" if item['start_date'] else "confirm dates"
+        st.write(f"**{item['title']}** — {coverage}")
+    chosen_id = st.selectbox("Monthly Plan to add or edit", ["new"] + [p["id"] for p in monthly_items],
+                            format_func=lambda value: "Add a new Monthly Plan" if value == "new" else next(p["title"] for p in monthly_items if p["id"] == value))
+    existing = next((p for p in monthly_items if p["id"] == chosen_id), None)
+    uploaded_monthly = st.file_uploader("Upload Monthly Plan (PDF or Word)", type=["pdf", "docx"], key=f"monthly_upload_{chosen_id}")
+    text = existing["plan_text"] if existing else ""
+    filename = existing["source_filename"] if existing else ""
+    if uploaded_monthly is not None:
+        text = extract_text_from_file(uploaded_monthly)
+        filename = uploaded_monthly.name
+        if not text.strip():
+            st.error("Could not extract readable text. Your saved Monthly Plans have not been changed.")
+    if text.strip():
+        token = hashlib.sha256((chosen_id + filename + text).encode()).hexdigest()[:16]
+        suggestions = suggest_dates(text, filename)
+        st.caption(suggestions["evidence"])
+        with st.expander("Preview Monthly Plan text"):
+            st.text(text[:4000])
+        with st.form(f"monthly_confirm_{token}"):
+            initial_start = date.fromisoformat(existing["start_date"]) if existing and existing["start_date"] else suggestions["start"]
+            initial_end = date.fromisoformat(existing["end_date"]) if existing and existing["end_date"] else suggestions["end"]
+            default_title = existing["title"] if existing and existing["start_date"] else (initial_start.strftime("%B %Y Monthly Plan") if initial_start else "Monthly Plan")
+            title = st.text_input("Monthly Plan title", value=default_title)
+            start = st.date_input("Monthly Plan start date", value=initial_start, format="DD/MM/YYYY")
+            end = st.date_input("Monthly Plan end date", value=initial_end, format="DD/MM/YYYY")
+            confirmed = st.checkbox("I confirm these start and end dates for this Monthly Plan")
+            save_monthly = st.form_submit_button("Save confirmed Monthly Plan", type="primary")
+        if save_monthly:
+            payload = {"id": chosen_id if existing else str(uuid4()), "title": title,
+                       "source_filename": filename, "plan_text": text,
+                       "start_date": start.isoformat() if start else None,
+                       "end_date": end.isoformat() if end else None}
+            try:
+                store.save_monthly_plan(payload, confirmed)
+            except StorageError as error:
+                st.error(str(error))
+            else:
+                st.success("Monthly Plan saved with confirmed dates.")
+                st.rerun()
     st.subheader("Yearly Plan")
 
     yearly_plan = st.file_uploader(
@@ -850,7 +900,6 @@ elif page == "Planning Setup":
         planning_setup = dict(saved_planning)
         for field, uploaded in (
             ("timetable_text", timetable),
-            ("monthly_plan_text", monthly_plan),
             ("yearly_plan_text", yearly_plan),
         ):
             if uploaded is not None:
