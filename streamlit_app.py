@@ -878,3 +878,37 @@ elif page == "Planning Setup":
         save_planning_setup(planning_setup)
         st.session_state["planning_setup"] = planning_setup
         st.success("Planning setup saved and documents processed.")
+
+# ---------- SAVED DATA BACKUP ----------
+
+with st.expander("Saved data backup"):
+    st.caption("Download a copy of all saved class context and progress.")
+    if st.button("Prepare saved data backup"):
+        backup = storage_call(store.export_backup)
+        st.session_state["cutover_backup"] = json.dumps(
+            backup, ensure_ascii=False, indent=2
+        )
+    if "cutover_backup" in st.session_state:
+        st.download_button(
+            "Download saved data backup",
+            data=st.session_state["cutover_backup"],
+            file_name="teacher_ai_saved_data_backup.json",
+            mime="application/json",
+            on_click="ignore",
+        )
+    st.caption("Restore a backup only into an empty database. Existing saved data will never be overwritten.")
+    backup_upload = st.file_uploader("Saved data backup to restore", type=["json"])
+    if st.button("Restore saved data backup", disabled=backup_upload is None):
+        try:
+            backup = json.loads(backup_upload.getvalue())
+        except (ValueError, UnicodeDecodeError):
+            st.error("This is not a readable Teacher AI backup. No data has been changed.")
+            st.stop()
+        restored = storage_call(store.restore_backup, backup)
+        if restored:
+            for key in ("teacher_profile", "planning_setup", "current_learning_position", "cutover_backup"):
+                st.session_state.pop(key, None)
+            st.success("All saved data restored.")
+            st.rerun()
+        else:
+            st.info("The database already contains saved data. Nothing has been overwritten.")

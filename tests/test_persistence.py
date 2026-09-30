@@ -181,6 +181,37 @@ class StoreTests(unittest.TestCase):
         with self.assertRaises(StorageError):
             Store("")
 
+    def test_backup_roundtrip_and_nonempty_restore_refused(self):
+        backup = {
+            "format_version": 1,
+            "teacher_profile": {"class_level": "5th Class"},
+            "planning_setup": {"monthly_plan_text": "Irish: Mé Féin"},
+            "current_learning_position": {"Maths": "Subtraction"},
+            "actual_progress": [{
+                "planning_day": "Wednesday", "subject": "Full day",
+                "lesson_topic": "Daily teaching plan", "status": "Partially completed",
+                "notes": "Gaeilge missed", "planning_date": "2026-09-30",
+            }],
+        }
+        self.assertTrue(self.store.restore_backup(backup))
+        exported = self.store.export_backup()
+        for name in DOCUMENTS:
+            self.assertEqual(exported[name], backup[name])
+        self.assertEqual(exported["actual_progress"][0]["notes"], "Gaeilge missed")
+        self.assertFalse(self.store.restore_backup(backup))
+        self.assertEqual(self.store.export_backup(), exported)
+
+    def test_invalid_backup_does_not_write_partial_data(self):
+        with self.assertRaises(StorageError):
+            self.store.restore_backup({
+                "format_version": 1,
+                "teacher_profile": {"value": "must not be saved"},
+                "planning_setup": {}, "current_learning_position": {},
+                "actual_progress": [{"planning_day": "Wednesday", "subject": "Full day",
+                    "status": "Completed", "planning_date": "not-a-date"}],
+            })
+        self.assertEqual(self.store.load_document("teacher_profile"), {})
+
 
 if __name__ == "__main__":
     unittest.main()

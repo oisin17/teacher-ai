@@ -35,10 +35,16 @@ the entire import and stops the app rather than starting with partial data.
 **Important:** adding a Streamlit secret or deploying dependencies can restart
 the runtime. An ephemeral SQLite file may disappear before the new code can read
 it. Automatic migration cannot recover a file that Streamlit has already removed.
-Preserve any accessible existing data before cutover; do not promise recovery
-based solely on the migration helper. Do not commit classroom data to this public
-repository. If the old database cannot be accessed, resolve recovery before
-calling migration complete.
+Use the legacy app's **Saved data backup → Prepare saved data backup → Download
+saved data backup** before changing Streamlit settings. This export includes
+all four data areas, including monthly plan text and dated/undated progress.
+Do not commit classroom data to this public repository.
+
+After cutover, compare the saved data to the backup. If automatic migration could
+not run because the runtime lost SQLite, upload the JSON backup under **Saved
+data backup** and click **Restore saved data backup**. Restore is transactional
+and refuses to overwrite any nonempty durable database. If the old database and
+backup cannot be accessed, resolve recovery before calling migration complete.
 
 An unavailable/misconfigured PostgreSQL database stops reads/saves with a safe
 message. There is no silent local fallback. Session values and success messages

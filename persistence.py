@@ -6,6 +6,7 @@ it is unavailable: that would make an unsuccessful durable save look successful.
 import json
 import sqlite3
 from contextlib import closing, contextmanager
+from datetime import date
 from pathlib import Path
 
 import psycopg
@@ -220,4 +221,68 @@ class Store:
             """, (planning_date, planning_day, status, notes, record_id))
             if result.rowcount != 1:
                 raise StorageError("This progress record no longer exists. Refresh and try again.")
+        return True
+
+    def export_backup(self):
+        with self._connection() as connection:
+            self._lock(connection)
+            backup = {"format_version": 1}
+            for table, column in DOCUMENTS.items():
+                row = connection.execute(
+                    f"SELECT {column} FROM {table} WHERE id = 1"
+                ).fetchone()
+                backup[table] = json.loads(row[0]) if row else {}
+            keys = ("id", "planning_day", "subject", "lesson_topic", "status", "notes", "planning_date")
+            rows = connection.execute(
+                "SELECT id, planning_day, subject, lesson_topic, status, notes, "
+                "planning_date FROM actual_progress ORDER BY id"
+            ).fetchall()
+            backup["actual_progress"] = [dict(zip(keys, row)) for row in rows]
+        return backup
+
+    def restore_backup(self, backup):
+        # Validate the whole upload before starting any write.
+        try:
+            if not isinstance(backup, dict) or backup.get("format_version") != 1:
+                raise ValueError("Unsupported backup")
+            if not all(isinstance(backup.get(table), dict) for table in DOCUMENTS):
+                raise ValueError("Missing documents")
+            rows = backup["actual_progress"]
+            if not isinstance(rows, list):
+                raise ValueError("Invalid progress")
+            for row in rows:
+                if not isinstance(row, dict):
+                    raise ValueError("Invalid record")
+                for key in ("planning_day", "subject", "status"):
+                    if not isinstance(row.get(key), str):
+                        raise ValueError("Missing record field")
+                if row["status"] not in ("Completed", "Partially completed", "Not taught"):
+                    raise ValueError("Invalid progress status")
+                for key in ("lesson_topic", "notes", "planning_date"):
+                    if row.get(key) is not None and not isinstance(row[key], str):
+                        raise ValueError("Invalid optional field")
+                if row.get("planning_date") is not None:
+                    if date.fromisoformat(row["planning_date"]).isoformat() != row["planning_date"]:
+                        raise ValueError("Invalid school date")
+        except (ValueError, KeyError, TypeError):
+            raise StorageError("This is not a valid Teacher AI backup. No saved data has been changed.") from None
+        with self._connection() as connection:
+            self._lock(connection)
+            # Never overwrite existing durable teacher edits through restore.
+            for table in [*DOCUMENTS, "actual_progress"]:
+                if connection.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone():
+                    return False
+            for table, column in DOCUMENTS.items():
+                connection.execute(
+                    f"INSERT INTO {table} (id, {column}) VALUES (1, %s)",
+                    (json.dumps(backup[table], ensure_ascii=False),),
+                )
+            for row in rows:
+                connection.execute("""
+                    INSERT INTO actual_progress
+                    (planning_day, subject, lesson_topic, status, notes, planning_date)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """, tuple(row.get(key) for key in (
+                    "planning_day", "subject", "lesson_topic", "status", "notes", "planning_date"
+                )))
         return True
