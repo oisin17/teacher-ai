@@ -57,7 +57,7 @@ class StoreTests(unittest.TestCase):
                 raise RuntimeError("Integration tests only accept a local test_teacher_ai database")
             self.real_connect = psycopg.connect
             with self.real_connect(self.url) as connection:
-                for table in ["lesson_progress", "day_plans", *DOCUMENTS, "actual_progress", "storage_migrations"]:
+                for table in ["monthly_plans", "lesson_progress", "day_plans", *DOCUMENTS, "actual_progress", "storage_migrations"]:
                     connection.execute(f"DROP TABLE IF EXISTS {table}")
             def connect(url, **kwargs):
                 # The isolated CI localhost service has no TLS; production
@@ -76,6 +76,82 @@ class StoreTests(unittest.TestCase):
     def tearDown(self):
         self.patcher.stop()
         self.temp.cleanup()
+
+    def monthly(self, id="sep", start="2026-09-01", end="2026-09-30"):
+        return {"id": id, "title": id, "source_filename": "October 2030.docx",
+                "plan_text": "September teaching", "start_date": start, "end_date": end}
+
+    def test_monthly_source_survives_progress_and_correction(self):
+        plan = sample_plan()
+        plan["monthly_plan"] = {"id": "sep", "title": "September 2026 Monthly Plan", "start_date": "2026-09-01", "end_date": "2026-09-30"}
+        self.store.save_day_plan(plan)
+        self.store.save_lesson_progress(plan["planning_date"], plan["plan_id"], outcomes(plan))
+        self.assertEqual(self.store.load_day(plan["planning_date"])["plan"]["monthly_plan"], plan["monthly_plan"])
+        record = self.store.load_progress_history()[0]
+        self.store.correct_lesson_progress(record["id"], "2026-09-29", outcomes(plan))
+        self.assertEqual(self.store.load_day("2026-09-29")["plan"]["monthly_plan"], plan["monthly_plan"])
+
+    def test_monthly_boundary_and_explicit_confirmation(self):
+        with self.assertRaises(StorageError):
+            self.store.save_monthly_plan(self.monthly())
+        self.store.save_monthly_plan(self.monthly(), True)
+        self.store.save_monthly_plan(self.monthly("oct", "2026-10-01", "2026-10-31"), True)
+        self.assertEqual(self.store.select_monthly_plan("2026-09-30")["id"], "sep")
+        self.assertEqual(self.store.select_monthly_plan("2026-10-01")["id"], "oct")
+        self.assertIsNone(self.store.select_monthly_plan("2027-09-30"))
+        self.assertIsNone(self.store.select_monthly_plan("2026-11-01"))
+
+    def test_monthly_overlap_and_edit_are_atomic(self):
+        self.store.save_monthly_plan(self.monthly(), True)
+        for start, end in (("2026-09-30", "2026-10-31"), ("2026-08-01", "2026-09-01"), ("2026-09-04", "2026-09-05")):
+            with self.assertRaises(StorageError):
+                self.store.save_monthly_plan(self.monthly("other", start, end), True)
+        changed = self.monthly()
+        changed["title"] = "Updated September"
+        self.store.save_monthly_plan(changed, True)
+        self.assertEqual(len(self.store.list_monthly_plans()), 1)
+
+    def test_concurrent_overlapping_monthly_saves_allow_only_one(self):
+        def save(number):
+            try:
+                self.store.save_monthly_plan(self.monthly(str(number)), True)
+                return True
+            except StorageError:
+                return False
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(save, range(4)))
+        self.assertEqual(sum(results), 1)
+        self.assertEqual(len(self.store.list_monthly_plans()), 1)
+
+    def test_monthly_backup_roundtrip_and_invalid_overlap_rejected(self):
+        self.store.save_monthly_plan(self.monthly(), True)
+        backup = self.store.export_backup()
+        destination = Store(self.url)
+        # Clear only the isolated test database.
+        with self.connect(self.url) as connection:
+            connection.execute("DELETE FROM monthly_plans")
+        self.assertTrue(destination.restore_backup(backup))
+        self.assertEqual(destination.list_monthly_plans(), backup["monthly_plans"])
+        backup["monthly_plans"].append(self.monthly("overlap"))
+        with self.assertRaises(StorageError):
+            destination.restore_backup(backup)
+        self.assertEqual(len(destination.list_monthly_plans()), 1)
+
+    def test_existing_monthly_migration_retains_text_and_never_guesses_dates(self):
+        original = {"monthly_plan_text": "September 2026 existing text", "yearly_plan_text": "year"}
+        self.store.save_document("planning_setup", original)
+        with self.connect(self.url) as connection:
+            connection.execute("DELETE FROM storage_migrations WHERE name = %s", ("dated_monthly_v1",))
+        self.store.initialise(self.legacy)
+        pending = self.store.list_monthly_plans()[0]
+        self.assertIsNone(pending["start_date"])
+        self.assertEqual(pending["plan_text"], original["monthly_plan_text"])
+        self.assertIsNone(self.store.select_monthly_plan("2026-09-30"))
+        pending.update(start_date="2026-09-01", end_date="2026-09-30")
+        self.store.save_monthly_plan(pending, True)
+        self.store.initialise(self.legacy)
+        self.assertEqual(self.store.list_monthly_plans()[0]["start_date"], "2026-09-01")
+        self.assertEqual(self.store.load_document("planning_setup"), original)
 
     def create_legacy(self, invalid=False, dated=True):
         with sqlite3.connect(self.legacy) as connection:
@@ -312,7 +388,7 @@ class StoreTests(unittest.TestCase):
     def test_new_backup_roundtrip_preserves_plans_and_lesson_snapshots(self):
         plan, position = self.save_sample()
         backup = self.store.export_backup()
-        self.assertEqual(backup["format_version"], 2)
+        self.assertEqual(backup["format_version"], 3)
         with self.connect(self.url) as connection:
             for table in ["lesson_progress", "day_plans", "actual_progress", *DOCUMENTS]:
                 connection.execute(f"DELETE FROM {table}")

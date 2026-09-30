@@ -9,6 +9,7 @@ from contextlib import closing, contextmanager
 from datetime import date
 from pathlib import Path
 
+from monthly_plans import validate_monthly_plan, iso_date
 import psycopg
 from lesson_progress import (
     LESSON_FIELDS, overall_status, project_learning_position,
@@ -101,6 +102,15 @@ class Store:
                     lesson_data TEXT NOT NULL
                 )
             """)
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS monthly_plans (
+                    id TEXT PRIMARY KEY, title TEXT NOT NULL,
+                    source_filename TEXT NOT NULL, plan_text TEXT NOT NULL,
+                    start_date DATE, end_date DATE,
+                    CHECK ((start_date IS NULL AND end_date IS NULL) OR
+                           (start_date IS NOT NULL AND end_date IS NOT NULL AND start_date <= end_date))
+                )
+            """)
             marker = connection.execute(
                 "SELECT name FROM storage_migrations WHERE name = %s",
                 ("legacy_sqlite_v1",),
@@ -112,11 +122,71 @@ class Store:
                     ("legacy_sqlite_v1",),
                 )
 
+            if connection.execute("SELECT name FROM storage_migrations WHERE name = %s",
+                                  ("dated_monthly_v1",)).fetchone() is None:
+                self._migrate_monthly(connection)
+                connection.execute("INSERT INTO storage_migrations (name) VALUES (%s)", ("dated_monthly_v1",))
+
+    @staticmethod
+    def _migrate_monthly(connection):
+        row = connection.execute("SELECT planning_data FROM planning_setup WHERE id = 1").fetchone()
+        text = json.loads(row[0]).get("monthly_plan_text", "") if row else ""
+        if text.strip():
+            connection.execute("""INSERT INTO monthly_plans
+                (id, title, source_filename, plan_text) VALUES (%s, %s, %s, %s)
+                ON CONFLICT (id) DO NOTHING""",
+                ("legacy-monthly-plan", "Existing saved plan — confirm dates", "", text))
+
+    @staticmethod
+    def _monthly(connection):
+        keys = ("id", "title", "source_filename", "plan_text", "start_date", "end_date")
+        result = []
+        for row in connection.execute("SELECT id, title, source_filename, plan_text, start_date, end_date FROM monthly_plans ORDER BY start_date, title").fetchall():
+            item = dict(zip(keys, row))
+            for key in ("start_date", "end_date"):
+                if item[key] is not None:
+                    item[key] = iso_date(item[key])
+            result.append(item)
+        return result
+
+    def list_monthly_plans(self):
+        with self._connection() as connection:
+            return self._monthly(connection)
+
+    def select_monthly_plan(self, selected_date):
+        selected_date = iso_date(selected_date)
+        matches = [p for p in self.list_monthly_plans() if p["start_date"] is not None
+                   and p["start_date"] <= selected_date <= p["end_date"]]
+        if len(matches) > 1:
+            raise StorageError("Overlapping Monthly Plans exist. Correct their dates before generating.")
+        return matches[0] if matches else None
+
+    def save_monthly_plan(self, plan, confirmed=False):
+        try:
+            if confirmed is not True:
+                raise ValueError("Dates must be confirmed")
+            validate_monthly_plan(plan)
+        except (ValueError, TypeError, KeyError):
+            raise StorageError("Confirm valid start and end dates and a readable Monthly Plan before saving.") from None
+        with self._connection() as connection:
+            self._lock(connection)
+            for existing in self._monthly(connection):
+                if (existing["id"] != plan["id"] and existing["start_date"] is not None
+                    and plan["start_date"] <= existing["end_date"] and plan["end_date"] >= existing["start_date"]):
+                    raise StorageError("These dates overlap another saved Monthly Plan. Correct the dates before saving.")
+            connection.execute("""INSERT INTO monthly_plans
+                (id, title, source_filename, plan_text, start_date, end_date)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title,
+                source_filename = EXCLUDED.source_filename, plan_text = EXCLUDED.plan_text,
+                start_date = EXCLUDED.start_date, end_date = EXCLUDED.end_date""",
+                tuple(plan[key] for key in ("id", "title", "source_filename", "plan_text", "start_date", "end_date")))
+
     @staticmethod
     def _import_legacy(connection, legacy_path):
         # Import only into a completely empty destination, once, atomically.
         # A stale deployment must never overwrite teacher edits in PostgreSQL.
-        for table in [*DOCUMENTS, "actual_progress", "day_plans"]:
+        for table in [*DOCUMENTS, "actual_progress", "day_plans", "monthly_plans"]:
             if connection.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone():
                 return
         path = Path(legacy_path)
@@ -227,6 +297,8 @@ class Store:
             if progress and progress.get("lessons"):
                 plan = {key: progress[key] for key in ("plan_id", "overview", "lessons")}
                 plan["planning_date"] = planning_date
+                if progress.get("monthly_plan"):
+                    plan["monthly_plan"] = progress["monthly_plan"]
         return {"plan": plan, "progress": progress}
 
     def save_day_plan(self, plan):
@@ -278,6 +350,8 @@ class Store:
             ] != [{key: item[key] for key in LESSON_FIELDS} for item in lessons]:
                 raise StorageError("The saved plan changed in another session. Refresh before recording progress.")
             payload = {"plan_id": plan_id, "overview": plan["overview"], "lessons": lessons}
+            if plan.get("monthly_plan"):
+                payload["monthly_plan"] = plan["monthly_plan"]
             status = overall_status(lessons)
             notes = "\n".join(f"{item['subject']} — {item['topic']}: {item['status']}"
                               + (f". {item['note']}" if item["note"] else "") for item in lessons)
@@ -320,6 +394,8 @@ class Store:
                 return None
             payload = {key: existing[key] for key in ("plan_id", "overview")}
             payload["lessons"] = lessons
+            if existing.get("monthly_plan"):
+                payload["monthly_plan"] = existing["monthly_plan"]
             notes = "\n".join(f"{item['subject']} — {item['topic']}: {item['status']}"
                               + (f". {item['note']}" if item["note"] else "") for item in lessons)
             connection.execute("""
@@ -379,7 +455,7 @@ class Store:
     def export_backup(self):
         with self._connection() as connection:
             self._lock(connection)
-            backup = {"format_version": 2}
+            backup = {"format_version": 3}
             for table, column in DOCUMENTS.items():
                 row = connection.execute(
                     f"SELECT {column} FROM {table} WHERE id = 1"
@@ -397,6 +473,7 @@ class Store:
             for row in backup["actual_progress"]:
                 if row["id"] in lesson_rows:
                     row.update(lesson_rows[row["id"]])
+            backup["monthly_plans"] = self._monthly(connection)
             backup["day_plans"] = [json.loads(row[0]) for row in connection.execute(
                 "SELECT plan_data FROM day_plans ORDER BY planning_date"
             ).fetchall()]
@@ -405,7 +482,7 @@ class Store:
     def restore_backup(self, backup):
         # Validate the whole upload before starting any write.
         try:
-            if not isinstance(backup, dict) or backup.get("format_version") not in (1, 2):
+            if not isinstance(backup, dict) or backup.get("format_version") not in (1, 2, 3):
                 raise ValueError("Unsupported backup")
             if not all(isinstance(backup.get(table), dict) for table in DOCUMENTS):
                 raise ValueError("Missing documents")
@@ -434,6 +511,18 @@ class Store:
             plans = backup.get("day_plans", [])
             if not isinstance(plans, list):
                 raise ValueError("Invalid plans")
+            monthly = backup["monthly_plans"] if backup["format_version"] == 3 else []
+            if not isinstance(monthly, list):
+                raise ValueError("Invalid monthly plans")
+            ids = set()
+            for item in monthly:
+                validate_monthly_plan(item, allow_pending=True)
+                if item["id"] in ids:
+                    raise ValueError("Duplicate monthly plan")
+                ids.add(item["id"])
+            confirmed = sorted([p for p in monthly if p["start_date"]], key=lambda p: p["start_date"])
+            if any(a["end_date"] >= b["start_date"] for a, b in zip(confirmed, confirmed[1:])):
+                raise ValueError("Overlapping monthly plans")
             dates = set()
             for plan in plans:
                 validate_plan(plan)
@@ -445,7 +534,7 @@ class Store:
         with self._connection() as connection:
             self._lock(connection)
             # Never overwrite existing durable teacher edits through restore.
-            for table in [*DOCUMENTS, "actual_progress", "day_plans", "lesson_progress"]:
+            for table in [*DOCUMENTS, "actual_progress", "day_plans", "lesson_progress", "monthly_plans"]:
                 if connection.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone():
                     return False
             for table, column in DOCUMENTS.items():
@@ -463,9 +552,16 @@ class Store:
                 ))).fetchone()[0]
                 if "lessons" in row:
                     payload = {key: row[key] for key in ("plan_id", "overview", "lessons")}
+                    if row.get("monthly_plan"):
+                        payload["monthly_plan"] = row["monthly_plan"]
                     connection.execute("INSERT INTO lesson_progress (record_id, lesson_data) VALUES (%s, %s)",
                                        (record_id, json.dumps(payload, ensure_ascii=False)))
             for plan in plans:
                 connection.execute("INSERT INTO day_plans (planning_date, plan_data) VALUES (%s, %s)",
                                    (plan["planning_date"], json.dumps(plan, ensure_ascii=False)))
+            for item in monthly:
+                connection.execute("INSERT INTO monthly_plans (id, title, source_filename, plan_text, start_date, end_date) VALUES (%s, %s, %s, %s, %s, %s)",
+                                   tuple(item[key] for key in ("id", "title", "source_filename", "plan_text", "start_date", "end_date")))
+            if backup["format_version"] < 3:
+                self._migrate_monthly(connection)
         return True
