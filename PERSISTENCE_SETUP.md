@@ -2,8 +2,44 @@
 
 This branch replaces the Streamlit runtime's SQLite database with PostgreSQL
 for Teacher Profile, Planning Setup, Current Learning Position and Actual
-Progress. The existing plan-generation and learning-update prompts are unchanged.
-Today's generated plan remains session-based, as before.
+Progress. Priority 2 also saves generated day plans and individual lesson
+outcomes in the same PostgreSQL database; no additional service or secret is needed.
+
+## Lesson progress (Priority 2)
+
+- `day_plans` stores one structured generated plan per school date. The same
+  lesson objects render the visible plan and provide the progress snapshots.
+  They contain stable lesson IDs, time, subject, topic, learning intention and
+  the original lesson details. Separate lessons in a subject stay separate.
+- `actual_progress` remains the daily record, including every historical
+  whole-day row. The additive `lesson_progress` table stores a JSON snapshot
+  against the daily record's ID. Existing tables are not destructively migrated.
+- New lesson outcomes start unset. **Mark all completed** fills the statuses;
+  change exceptions, add optional notes (up to 300 characters), then save once.
+  A partial set of statuses cannot be saved. Draft edits are not teaching records.
+- Lesson outcomes and the Current Learning evidence section save atomically,
+  under the existing advisory lock. Recording requires no extra model call.
+  The update preserves existing context and records exact planned intentions,
+  outcomes and verbatim teacher notes. Notes override conflicting intentions or
+  statuses; completion never establishes whole-topic completion. Partial work
+  retains uncertainty and missed learning stays outstanding.
+- Evidence is rebuilt from dated durable lesson history, newest first. Retrying
+  a save does not duplicate evidence; corrections remove obsolete outcomes and
+  can move a record's school date without colliding with another record.
+  An explicit Current Learning edit becomes teacher-confirmed context.
+- The next generation reads fresh durable Current Learning and recent detailed
+  progress, including the original lesson content. Existing planning rules and
+  the existing model are preserved; the response now uses a validated JSON
+  schema rather than trying to extract lessons from free-form markdown.
+- Once progress exists, generation for that date is disabled. Use the existing
+  lesson outcomes/corrections; do not replace their original plan with newly
+  generated learning. Another session's regenerated plan invalidates stale IDs.
+- Refresh restores the saved plan and submitted outcomes for the selected date.
+  Unsaved form edits remain session/browser drafts; select the school date again
+  after a new session. Historical whole-day records remain correctable through
+  their original controls and are never converted using invented intentions.
+- Backup format 2 includes plans and lesson snapshots. Restore still accepts
+  format 1, validates everything before writing, and refuses any nonempty store.
 
 ## Setup
 
