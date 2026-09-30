@@ -104,11 +104,14 @@ def load_recent_progress(limit=10):
 
 def lesson_progress_inputs(lessons, prefix):
     """One quick row per real lesson; unset is not a teaching outcome."""
-    if st.button("Mark all completed", key=f"{prefix}_all"):
+    def mark_all_completed():
         for lesson in lessons:
             st.session_state[f"{prefix}_{lesson['lesson_id']}_status"] = "Completed"
     outcomes = []
     with st.form(f"{prefix}_form"):
+        # Submit draft inputs to the callback so a late bulk action preserves
+        # any notes already typed in the form. It does not save teaching data.
+        st.form_submit_button("Mark all completed", on_click=mark_all_completed)
         for lesson in lessons:
             status_key = f"{prefix}_{lesson['lesson_id']}_status"
             note_key = f"{prefix}_{lesson['lesson_id']}_note"

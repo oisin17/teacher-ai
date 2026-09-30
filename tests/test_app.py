@@ -122,6 +122,14 @@ class AppTests(unittest.TestCase):
         self.assertEqual(len(self.store.load_progress_history()), 1)
         self.assertIn("Round five-digit numbers", self.store.load_document("current_learning_position")["Maths"])
 
+    def test_mark_all_preserves_notes_and_does_not_save_draft(self):
+        app = self.generated_app()
+        app.text_input[1].set_value("Keep this teacher correction")
+        self.button(app, "Mark all completed").click().run()
+        self.assertEqual(app.text_input[1].value, "Keep this teacher correction")
+        self.assertEqual(self.store.load_progress_history(), [])
+        self.assertTrue(all(item.value == "Completed" for item in app.radio[1:]))
+
     def test_progress_failure_does_not_update_learning_or_report_success(self):
         app = self.generated_app()
         before = self.store.load_document("current_learning_position")
