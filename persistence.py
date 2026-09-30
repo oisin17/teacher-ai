@@ -297,6 +297,8 @@ class Store:
             if progress and progress.get("lessons"):
                 plan = {key: progress[key] for key in ("plan_id", "overview", "lessons")}
                 plan["planning_date"] = planning_date
+                if progress.get("monthly_plan"):
+                    plan["monthly_plan"] = progress["monthly_plan"]
         return {"plan": plan, "progress": progress}
 
     def save_day_plan(self, plan):
@@ -348,6 +350,8 @@ class Store:
             ] != [{key: item[key] for key in LESSON_FIELDS} for item in lessons]:
                 raise StorageError("The saved plan changed in another session. Refresh before recording progress.")
             payload = {"plan_id": plan_id, "overview": plan["overview"], "lessons": lessons}
+            if plan.get("monthly_plan"):
+                payload["monthly_plan"] = plan["monthly_plan"]
             status = overall_status(lessons)
             notes = "\n".join(f"{item['subject']} — {item['topic']}: {item['status']}"
                               + (f". {item['note']}" if item["note"] else "") for item in lessons)
@@ -390,6 +394,8 @@ class Store:
                 return None
             payload = {key: existing[key] for key in ("plan_id", "overview")}
             payload["lessons"] = lessons
+            if existing.get("monthly_plan"):
+                payload["monthly_plan"] = existing["monthly_plan"]
             notes = "\n".join(f"{item['subject']} — {item['topic']}: {item['status']}"
                               + (f". {item['note']}" if item["note"] else "") for item in lessons)
             connection.execute("""
@@ -546,6 +552,8 @@ class Store:
                 ))).fetchone()[0]
                 if "lessons" in row:
                     payload = {key: row[key] for key in ("plan_id", "overview", "lessons")}
+                    if row.get("monthly_plan"):
+                        payload["monthly_plan"] = row["monthly_plan"]
                     connection.execute("INSERT INTO lesson_progress (record_id, lesson_data) VALUES (%s, %s)",
                                        (record_id, json.dumps(payload, ensure_ascii=False)))
             for plan in plans:

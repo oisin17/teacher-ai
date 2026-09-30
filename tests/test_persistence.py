@@ -81,6 +81,16 @@ class StoreTests(unittest.TestCase):
         return {"id": id, "title": id, "source_filename": "October 2030.docx",
                 "plan_text": "September teaching", "start_date": start, "end_date": end}
 
+    def test_monthly_source_survives_progress_and_correction(self):
+        plan = sample_plan()
+        plan["monthly_plan"] = {"id": "sep", "title": "September 2026 Monthly Plan", "start_date": "2026-09-01", "end_date": "2026-09-30"}
+        self.store.save_day_plan(plan)
+        self.store.save_lesson_progress(plan["planning_date"], plan["plan_id"], outcomes(plan))
+        self.assertEqual(self.store.load_day(plan["planning_date"])["plan"]["monthly_plan"], plan["monthly_plan"])
+        record = self.store.load_progress_history()[0]
+        self.store.correct_lesson_progress(record["id"], "2026-09-29", outcomes(plan))
+        self.assertEqual(self.store.load_day("2026-09-29")["plan"]["monthly_plan"], plan["monthly_plan"])
+
     def test_monthly_boundary_and_explicit_confirmation(self):
         with self.assertRaises(StorageError):
             self.store.save_monthly_plan(self.monthly())
