@@ -460,7 +460,9 @@ Incorporate placement feedback and have the V1 ready by February 2027.
 ## 16. First task for a new Work session
 
 **Updated:** Priorities 1 and 2 are implemented. Inspect the current code and
-sections 18–19, then continue with Priority 3 (planning quality). The original
+sections 18–20. Finish the live dated-monthly acceptance check once the owner
+confirms the existing plan dates and supplies the actual October document; then
+continue with Priority 3 (planning quality). The original
 persistence brief below is retained as acceptance context, not an outstanding task.
 
 Start by inspecting `streamlit_app.py` and the current persistence helpers.
@@ -620,3 +622,63 @@ specificity when supplied, correct subject/strand sequencing and timetable
 coverage. Do not weaken persistence or substitute speculative completed-topic
 assumptions for the new granular learning evidence. Get teacher feedback on the
 form's actual 30–60-second use in normal end-of-day recording.
+
+
+## 20. Dated Monthly Plans — 2026-09-30
+
+PR #3 adds the smallest date-aware Monthly Plan V1. The existing teacher profile,
+yearly/timetable documents, Current Learning, progress projection and generation
+rules are preserved. No new account, database, secret, authentication or paid
+infrastructure was introduced.
+
+- `monthly_plans` stores ID, title, original filename, extracted text and explicit
+  inclusive PostgreSQL start/end dates. Selection uses those stored dates only.
+- Upload detection is a conservative deterministic suggestion, with evidence and
+  editable dates/title. Explicit teacher confirmation is required before save.
+- Multiple plans remain saved; choose an existing entry to edit its dates or
+  replace its document. Inclusive overlaps are rejected atomically under the
+  existing advisory transaction lock, including concurrent saves.
+- The `dated_monthly_v1` migration copies the old generic document verbatim into
+  “Existing saved plan — confirm dates”, with null dates. The original Planning
+  Setup JSON is retained. The teacher can confirm dates without uploading again.
+- Today identifies the matching plan and coverage. Missing confirmed coverage
+  blocks new generation; there is no generic/adjacent-month fallback.
+- New day plans and lesson snapshots retain their original Monthly Plan ID/title/
+  dates. Older saved day plans display an explicit source-not-recorded caption.
+- Backup format 3 includes all Monthly Plans. Formats 1/2 remain restorable into
+  an empty database and migrate generic documents into a pending entry.
+
+### Tests and deployment
+
+41 local automated tests pass, with the storage suite also passing against real
+PostgreSQL 16 in GitHub Actions. Checks cover September 30 → September and October
+1 → October (2026), inclusive bounds, year differences, missing coverage, misleading
+filenames, corrected suggestions, explicit confirmation, concurrent overlap
+rejection, legacy preservation/idempotence, backup compatibility, monthly source
+retention and the existing adaptive loop. AppTest exercises Word upload → corrected
+date confirmation → stored plan → date selection → mocked generation.
+
+Live testing caught a Streamlit hot reload retaining the old imported storage
+module and cached initializer. The app now reloads a legacy module lacking the
+new API and uses initialization cache version 4. The fix was retested live and CI
+passed. The deployed app now shows the migrated pending plan and offers confirmation
+without reupload. A Word copy of the existing saved document was uploaded, its
+suggested dates inspected, and saving without checking confirmation was rejected.
+The temporary upload was removed without saving an extra plan.
+
+The post-migration format-3 export matched the previous format-2 export exactly
+for Teacher Profile, Planning Setup, Current Learning, Actual Progress and saved
+day plans. The pending Monthly Plan text also matched the old generic text exactly.
+Live September 30 and October 1 both correctly report no confirmed coverage; on
+October 1 the previous six-lesson day plan is retained and explicitly marked as
+predating recorded monthly sources. New generation is disabled, avoiding fallback.
+
+### Remaining live acceptance check
+
+The original document names September but has no explicit year and includes Irish
+fortnight date headings. Its dates are deliberately left unconfirmed for the owner.
+No genuine October plan has been supplied. Do not fabricate October coverage or
+confirm inferred dates as teacher-approved. The complete real-model two-month
+browser generation check requires the owner's confirmed September range and actual
+October upload/range. Automated boundary and upload-to-generation checks have passed;
+do not describe that remaining live confirmation/generation check as completed.

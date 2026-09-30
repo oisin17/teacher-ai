@@ -38,8 +38,8 @@ outcomes in the same PostgreSQL database; no additional service or secret is nee
   Unsaved form edits remain session/browser drafts; select the school date again
   after a new session. Historical whole-day records remain correctable through
   their original controls and are never converted using invented intentions.
-- Backup format 2 includes plans and lesson snapshots. Restore still accepts
-  format 1, validates everything before writing, and refuses any nonempty store.
+- Backup format 3 includes dated/pending Monthly Plans, day plans and lesson snapshots. Restore still accepts
+  formats 1 and 2, validates everything before writing, and refuses any nonempty store.
 
 ## Setup
 
@@ -113,3 +113,23 @@ production use. PostgreSQL is portable to another provider via DATABASE_URL.
 Do not roll back to the old SQLite code after durable writes and assume that
 those writes will be available locally. Preserve PostgreSQL as the data source
 when fixing or rolling back application behaviour.
+
+## Dated Monthly Plans
+
+Monthly Plans now live in the additive `monthly_plans` table. Start/end dates
+are inclusive and nullable only for legacy plans awaiting teacher confirmation.
+The one-time `dated_monthly_v1` migration preserves the original document verbatim
+as “Existing saved plan — confirm dates”; it leaves the original Planning Setup
+JSON intact. Confirm its dates through Planning Setup without uploading again.
+
+Uploads offer deterministic date suggestions and editable dates/title. An explicit
+checkbox is required for every save, including edits. The existing transaction
+lock serializes inclusive overlap validation and upserts across sessions. Selection
+uses only confirmed stored dates; missing coverage blocks generation. Filename or
+document date detection is never called by the selector. Saved day plans and lesson
+progress retain the original Monthly Plan identity/date range for provenance.
+
+Schema initialization cache version is 4. The app reloads an imported legacy
+storage module if it lacks the dated-plan API before initializing storage.
+Old backups restore their generic Monthly Plan into a pending confirmation row;
+format 3 preserves confirmed dates and pending rows. No extra service is needed.
