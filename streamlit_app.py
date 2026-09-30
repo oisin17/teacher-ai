@@ -6,6 +6,10 @@ from docx import Document
 from persistence import Store, StorageError
 import json
 from datetime import date, timedelta
+from lesson_progress import (
+    EVIDENCE_MARKER, PLAN_FORMAT, STATUSES,
+    parse_generated_plan, plan_markdown,
+)
 
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
@@ -96,6 +100,42 @@ def rebuild_current_learning_from_history():
 
 def load_recent_progress(limit=10):
     return storage_call(store.load_recent_progress, limit)
+
+
+def lesson_progress_inputs(lessons, prefix):
+    """One quick row per real lesson; unset is not a teaching outcome."""
+    if st.button("Mark all completed", key=f"{prefix}_all"):
+        for lesson in lessons:
+            st.session_state[f"{prefix}_{lesson['lesson_id']}_status"] = "Completed"
+    outcomes = []
+    with st.form(f"{prefix}_form"):
+        for lesson in lessons:
+            status_key = f"{prefix}_{lesson['lesson_id']}_status"
+            note_key = f"{prefix}_{lesson['lesson_id']}_note"
+            st.session_state.setdefault(status_key, lesson.get("status"))
+            st.session_state.setdefault(note_key, lesson.get("note", ""))
+            title, status_column, note_column = st.columns([2, 3, 2])
+            with title:
+                st.markdown(f"**{lesson['subject']} — {lesson['topic']}**")
+                st.caption(lesson["time"])
+            with status_column:
+                status = st.radio(
+                    f"{lesson['subject']} — {lesson['topic']} progress",
+                    STATUSES, index=None, horizontal=True, key=status_key,
+                    label_visibility="collapsed",
+                )
+            with note_column:
+                note = st.text_input(
+                    f"{lesson['subject']} — {lesson['topic']} note (optional)",
+                    placeholder="Short note (optional)", max_chars=300,
+                    key=note_key, label_visibility="collapsed",
+                )
+            outcomes.append({**lesson, "status": status, "note": note.strip()})
+        submitted = st.form_submit_button(
+            "Save Today's Progress" if prefix.startswith("today_") else "Save Correction",
+            type="primary",
+        )
+    return outcomes, submitted
 
 
 if "teacher_profile" not in st.session_state:
@@ -209,7 +249,10 @@ if page == "Today":
 
     if planning_day in ["Saturday", "Sunday"]:
         st.warning("This date falls on a weekend. Choose a school day unless you intentionally want to plan for it.")
-    if st.button("✨ Generate Today's Plan", type="primary"):
+    day_state = storage_call(store.load_day, planning_date.isoformat())
+    if day_state["progress"]:
+        st.caption("Progress is already saved for this date. You can update it below or in Progress History.")
+    if st.button("✨ Generate Today's Plan", type="primary", disabled=day_state["progress"] is not None):
 
         teacher_profile = st.session_state.get("teacher_profile", {})
         planning_setup = st.session_state.get("planning_setup", {})
@@ -230,10 +273,12 @@ if page == "Today":
             with st.spinner("Teacher AI is planning your day..."):
                 try:
                     recent_progress = load_recent_progress()
-                    current_learning_position = st.session_state.get("current_learning_position", {})
+                    current_learning_position = load_current_learning_position()
+                    st.session_state["current_learning_position"] = current_learning_position
 
                     response = client.responses.create(
                         model="gpt-5.4-mini",
+                        text={"format": PLAN_FORMAT},
                         input=(
                             "You are Teacher AI, an adaptive planning assistant "
                             "for primary school teachers.\n\n"
@@ -304,6 +349,19 @@ if page == "Today":
 
                             "Do not create lessons for breaks, lunch, yard, roll call, "
                             "tidy-up or other non-teaching periods.\n\n"
+                            "RETURN THE STRUCTURED DAY PLAN:\n"
+                            "- overview: concise Markdown timetable including the protected non-teaching routines.\n"
+                            "- lessons: one item for EVERY actual teaching lesson in that timetable, in time order; "
+                            "keep separate lessons in the same subject separate. Do not list breaks or yard as lessons.\n"
+                            "- Each lesson has time, subject, topic, learning_intention, and details. "
+                            "Use standard subject names (Maths, English, Gaeilge, Science, History, Geography, etc.).\n"
+                            "- details is the concise usable Markdown lesson content: resources, timed phases, "
+                            "differentiation, assessment and early finisher where appropriate. "
+                            "The app will display the supplied subject, topic and learning intention directly above it.\n"
+                            "- The learning intention must precisely match what those lesson phases teach.\n"
+                            "- Dated individual LESSON progress is evidence of that lesson's outcome. "
+                            "Teacher notes override both the selected status and any conflicting planned intention. "
+                            "Use newer dated evidence ahead of older entries; never assume a completed lesson finishes its unit.\n\n"
 
                             f"TEACHER PROFILE:\n{teacher_profile}\n\n"
                             f"WEEKLY TIMETABLE:\n{timetable_text}\n\n"
@@ -319,133 +377,43 @@ if page == "Today":
                         )
                     )
 
-                    st.session_state["todays_plan"] = response.output_text
+                    generated_plan = parse_generated_plan(response.output_text, planning_date.isoformat())
+                    storage_call(store.save_day_plan, generated_plan)
+                    day_state = {"plan": generated_plan, "progress": None}
+                    st.session_state["todays_plan"] = plan_markdown(generated_plan)
                     st.session_state["todays_plan_date"] = planning_date.isoformat()
                     st.session_state["todays_plan_day"] = planning_day
 
-                except Exception as e:
-                    st.error(f"Teacher AI error: {e}")
+                except Exception:
+                    st.error("Teacher AI could not generate a complete lesson plan. Your previous saved plan is unchanged. Please try again.")
 
     st.subheader("Lessons")
 
-    plan_date_text = st.session_state.get("todays_plan_date")
-    selected_date_text = planning_date.isoformat()
-
-    if "todays_plan" in st.session_state and plan_date_text == selected_date_text:
-        plan_day = st.session_state.get("todays_plan_day", planning_day)
-        plan_date = date.fromisoformat(plan_date_text)
-
-        st.caption(
-            f"Generated for **{plan_day}, {plan_date.strftime('%d/%m/%Y')}**"
-        )
-        st.markdown(st.session_state["todays_plan"])
+    saved_plan = day_state["plan"]
+    if saved_plan:
+        st.caption(f"Generated for **{planning_day}, {planning_date.strftime('%d/%m/%Y')}**")
+        st.markdown(plan_markdown(saved_plan))
         st.divider()
         st.subheader("How did today go?")
-
-        progress_status = st.radio(
-            "Overall progress",
-            ["Completed", "Partially completed", "Not taught"],
-            horizontal=True
-        )
-    
-        progress_notes = st.text_area(
-            "What actually happened? (optional)",
-            placeholder="e.g. Maths completed. Gaeilge only reached the first activity. Science was not taught because of an assembly."
-        )
-    
-        if st.button("Save Today's Progress"):
-            progress_was_updated = storage_call(
-                store.save_progress,
-                plan_date.isoformat(),
-                str(plan_day),
-                progress_status,
-                progress_notes,
-            )
-
-            # Use the teacher's account of what actually happened to update
-            # Teacher AI's persistent understanding of the class position.
-            if progress_notes.strip():
-                try:
-                    current_position = st.session_state.get(
-                        "current_learning_position", {}
-                    )
-
-                    update_response = client.responses.create(
-                        model="gpt-5.4-mini",
-                        input=(
-                            "You maintain a primary teacher's persistent CURRENT LEARNING POSITION. "
-                            "Update it conservatively from today's teacher-confirmed progress.\n\n"
-                            "RULES:\n"
-                            "- The teacher's progress notes are authoritative for what actually happened today.\n"
-                            "- Preserve existing information that today's notes do not change.\n"
-                            "- Do not invent textbook pages, stopping points, concepts taught, or topic completion.\n"
-                            "- 'Completed' means the specific lesson/day was completed, not automatically the whole topic/unit.\n"
-                            "- If something was partially completed, record only what is safely known and retain uncertainty about the exact stopping point unless stated.\n"
-                            "- If something was not taught because of time or interruption, keep it outstanding; do not infer pupil difficulty.\n"
-                            "- Keep entries concise and useful for planning the next lesson.\n"
-                            "- Return ONLY valid JSON with exactly these keys: Maths, English, Gaeilge, SESE, Other. "
-                            "Each value must be a plain string.\n\n"
-                            f"EXISTING CURRENT LEARNING POSITION:\n{current_position}\n\n"
-                            f"DATE: {plan_date.isoformat()} ({plan_day})\n"
-                            f"OVERALL STATUS: {progress_status}\n"
-                            f"TEACHER PROGRESS NOTES:\n{progress_notes}\n"
-                        )
-                    )
-
-                    updated_position = json.loads(update_response.output_text)
-
-                    required_keys = ["Maths", "English", "Gaeilge", "SESE", "Other"]
-                    if all(
-                        key in updated_position
-                        and isinstance(updated_position[key], str)
-                        for key in required_keys
-                    ):
-                        save_current_learning_position(updated_position)
-                        st.session_state["current_learning_position"] = updated_position
-                        if progress_was_updated:
-                            st.success(
-                                "Progress for this date was updated and Current Learning Position refreshed."
-                            )
-                        else:
-                            st.success(
-                                "Today's progress saved and Current Learning Position updated."
-                            )
-                    else:
-                        st.warning(
-                            "Today's progress was saved, but the Current Learning Position "
-                            "could not be updated automatically."
-                        )
-
-                except Exception:
-                    st.warning(
-                        "Today's progress was saved, but the Current Learning Position "
-                        "could not be updated automatically."
-                    )
-            else:
-                if progress_was_updated:
-                    st.success(
-                        "Progress for this date was updated. Add a short note if you want "
-                        "Teacher AI to update Current Learning Position automatically."
-                    )
-                else:
-                    st.success(
-                        "Today's progress saved. Add a short note next time if you want "
-                        "Teacher AI to update Current Learning Position automatically."
-                    )
-    else:
-        if "todays_plan" in st.session_state and plan_date_text:
-            old_plan_date = date.fromisoformat(plan_date_text)
-            st.info(
-                f"The plan currently in memory is for "
-                f"{old_plan_date.strftime('%d/%m/%Y')}. "
-                f"Generate a plan for {planning_date.strftime('%d/%m/%Y')} "
-                "before saving progress for this date."
-            )
+        st.caption("Mark all completed, then change any exceptions. Notes are optional. Nothing is saved until you press Save.")
+        if day_state["progress"] and not day_state["progress"].get("lessons"):
+            st.info("This date has a historical whole-day record. Review or correct it in Progress History.")
         else:
-            st.info(
-                "No lessons generated yet. Upload your planning documents "
-                "and click Generate Today's Plan."
+            outcomes, submitted = lesson_progress_inputs(
+                saved_plan["lessons"], f"today_{planning_date.isoformat()}_{saved_plan['plan_id']}"
             )
+            if submitted:
+                if any(lesson["status"] is None for lesson in outcomes):
+                    st.warning("Choose a progress status for every lesson, or use Mark all completed.")
+                else:
+                    position = storage_call(store.save_lesson_progress, planning_date.isoformat(),
+                                            saved_plan["plan_id"], outcomes)
+                    st.session_state["current_learning_position"] = position
+                    st.success("Lesson progress saved and Current Learning Position updated.")
+    elif day_state["progress"]:
+        st.info("This date has a historical whole-day record. Review or correct it in Progress History.")
+    else:
+        st.info("No lessons generated for this date yet. Upload your planning documents and click Generate Today's Plan.")
 
 # ---------- PROGRESS HISTORY ----------
 
@@ -480,49 +448,63 @@ elif page == "Progress History":
         )
         edited_day = edited_date.strftime("%A")
 
-        edited_status = st.radio(
-            "Overall progress",
-            ["Completed", "Partially completed", "Not taught"],
-            index=["Completed", "Partially completed", "Not taught"].index(selected["status"]),
-            horizontal=True,
-            key=f"history_status_{selected['id']}"
-        )
-        edited_notes = st.text_area(
-            "What actually happened?",
-            value=selected["notes"],
-            height=160,
-            key=f"history_notes_{selected['id']}"
-        )
-
-        st.caption(
-            f"This record will be stored as **{edited_day}, {edited_date.strftime('%d %B %Y')}**."
-        )
-
-        if st.button("Save Correction", type="primary"):
-            corrected = storage_call(
-                store.correct_progress,
-                selected["id"],
-                edited_date.isoformat(),
-                edited_day,
-                edited_status,
-                edited_notes,
+        if selected.get("lessons"):
+            with st.expander("Original lesson intentions"):
+                for lesson in selected["lessons"]:
+                    st.markdown(f"**{lesson['subject']} — {lesson['topic']}**: {lesson['learning_intention']}")
+            outcomes, submitted = lesson_progress_inputs(selected["lessons"], f"history_{selected['id']}")
+            if submitted:
+                position = storage_call(store.correct_lesson_progress, selected["id"], edited_date.isoformat(), outcomes)
+                if position is None:
+                    st.error("Another progress record already exists for that date. Choose the existing date instead.")
+                else:
+                    st.session_state["current_learning_position"] = position
+                    st.success("Lesson progress corrected and Current Learning Position updated.")
+        else:
+            st.caption("Historical whole-day record")
+            edited_status = st.radio(
+                "Overall progress",
+                ["Completed", "Partially completed", "Not taught"],
+                index=["Completed", "Partially completed", "Not taught"].index(selected["status"]),
+                horizontal=True,
+                key=f"history_status_{selected['id']}"
             )
-            if not corrected:
-                st.error(
-                    "Another progress record already exists for that date. "
-                    "Choose the existing date instead of creating a duplicate."
+            edited_notes = st.text_area(
+                "What actually happened?",
+                value=selected["notes"],
+                height=160,
+                key=f"history_notes_{selected['id']}"
+            )
+
+            st.caption(
+                f"This record will be stored as **{edited_day}, {edited_date.strftime('%d %B %Y')}**."
+            )
+
+            if st.button("Save Correction", type="primary"):
+                corrected = storage_call(
+                    store.correct_progress,
+                    selected["id"],
+                    edited_date.isoformat(),
+                    edited_day,
+                    edited_status,
+                    edited_notes,
                 )
-            else:
-                try:
-                    rebuild_current_learning_from_history()
-                    st.success(
-                        "Progress corrected and Current Learning Position rebuilt from the valid history."
+                if not corrected:
+                    st.error(
+                        "Another progress record already exists for that date. "
+                        "Choose the existing date instead of creating a duplicate."
                     )
-                    st.rerun()
-                except Exception:
-                    st.warning(
-                        "Progress was corrected, but Current Learning Position could not be rebuilt automatically."
-                    )
+                else:
+                    try:
+                        rebuild_current_learning_from_history()
+                        st.success(
+                            "Progress corrected and Current Learning Position rebuilt from the valid history."
+                        )
+                        st.rerun()
+                    except Exception:
+                        st.warning(
+                            "Progress was corrected, but Current Learning Position could not be rebuilt automatically."
+                        )
 
 # ---------- CURRENT LEARNING ----------
 
@@ -570,6 +552,10 @@ elif page == "Current Learning":
             "SESE": sese_position,
             "Other": other_position
         }
+        # Explicit teacher edits become confirmed context; newer saved lesson
+        # outcomes can subsequently update it without discarding the edit.
+        position = {key: value.replace(EVIDENCE_MARKER, "\n\nTeacher-confirmed lesson context:\n")
+                    for key, value in position.items()}
         save_current_learning_position(position)
         st.session_state["current_learning_position"] = position
         st.success("Current Learning Position saved.")

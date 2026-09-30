@@ -10,6 +10,7 @@ import streamlit as st
 from streamlit.testing.v1 import AppTest
 from persistence import Store, StorageError
 from test_persistence import SQLiteAdapter
+from fixtures import generation_output, sample_plan, outcomes
 
 
 class AppTests(unittest.TestCase):
@@ -55,43 +56,126 @@ class AppTests(unittest.TestCase):
         app.radio[0].set_value(page).run()
         self.assertEqual(len(app.exception), 0)
 
-    def test_adaptive_loop_and_plan_survives_radio_rerun_and_fresh_session(self):
-        self.client.responses.create.return_value = SimpleNamespace(output_text="Test plan: subtraction, narrative, Gaeilge.")
+    def button(self, app, label):
+        return next(item for item in app.button if item.label == label)
+
+    def generated_app(self):
+        self.client.responses.create.return_value = SimpleNamespace(output_text=generation_output())
         app = self.new_app()
         app.date_input[0].set_value(date(2026, 9, 30)).run()
-        app.button[0].click().run()
+        self.button(app, "✨ Generate Today's Plan").click().run()
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual(len(app.error), 0)
+        return app
+
+    def test_adaptive_loop_and_plan_survives_radio_rerun_and_fresh_session(self):
+        app = self.generated_app()
         original_plan = app.session_state["todays_plan"]
-        app.radio[1].set_value("Partially completed").run()
+        self.assertTrue(all(item.value is None for item in app.radio[1:]))
+        self.button(app, "Mark all completed").click().run()
+        self.assertTrue(all(item.value == "Completed" for item in app.radio[1:]))
+        app.radio[2].set_value("Partially completed").run()
+        app.radio[3].set_value("Not taught").run()
+        app.text_input[1].set_value("didn't finish final activity")
+        app.text_input[2].set_value("not taught because of assembly")
+        self.button(app, "Save Today's Progress").click().run()
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual(len(app.success), 1)
         self.assertEqual(app.session_state["todays_plan"], original_plan)
         self.assertEqual(app.session_state["todays_plan_date"], "2026-09-30")
-        updated = {
-            "Maths": "Today's subtraction lesson completed",
-            "English": "Final narrative activity unfinished",
-            "Gaeilge": "Not taught due to assembly; outstanding",
-            "SESE": "", "Other": "",
-        }
-        import json
-        self.client.responses.create.return_value = SimpleNamespace(output_text=json.dumps(updated))
-        notes = "Maths completed. English final activity unfinished. Gaeilge not taught due to assembly."
-        app.text_area[0].set_value(notes)
-        app.button[1].click().run()
-        self.assertEqual(len(app.exception), 0)
-        self.assertEqual(self.store.load_document("current_learning_position"), updated)
-        self.assertEqual(self.store.load_progress_history()[0]["notes"], notes)
+        updated = self.store.load_document("current_learning_position")
+        self.assertIn("Round five-digit numbers", updated["Maths"])
+        self.assertIn("does not establish completion", updated["Maths"])
+        self.assertIn("didn't finish final activity", updated["English"])
+        self.assertIn("outstanding", updated["Gaeilge"])
+        self.assertIn("assembly", updated["Gaeilge"])
+        self.assertEqual(len(self.store.load_progress_history()[0]["lessons"]), 3)
+        # Saving requires no second AI call: recorded learning commits with progress.
+        self.assertEqual(self.client.responses.create.call_count, 1)
 
-        # A new Streamlit session hydrates from durable storage.
         fresh = self.new_app()
+        fresh.date_input[0].set_value(date(2026, 9, 30)).run()
         self.assertEqual(fresh.session_state["teacher_profile"]["pupil_count"], 22)
         self.assertEqual(fresh.session_state["planning_setup"], self.setup)
         self.assertEqual(fresh.session_state["current_learning_position"], updated)
-        self.client.responses.create.return_value = SimpleNamespace(output_text="Next plan continues unfinished English and restores Gaeilge.")
+        self.assertEqual(fresh.radio[2].value, "Partially completed")
+        self.assertEqual(fresh.text_input[2].value, "not taught because of assembly")
+        self.assertTrue(self.button(fresh, "✨ Generate Today's Plan").disabled)
+        self.assertTrue(any("Narrative openings" in item.value for item in fresh.markdown))
         fresh.date_input[0].set_value(date(2026, 10, 1)).run()
-        fresh.button[0].click().run()
+        self.assertEqual(len(fresh.radio), 1)  # old plan cannot receive progress for new date
+        self.button(fresh, "✨ Generate Today's Plan").click().run()
         prompt = self.client.responses.create.call_args.kwargs["input"]
-        self.assertIn(updated["English"], prompt)
-        self.assertIn(updated["Gaeilge"], prompt)
-        self.assertIn(notes, prompt)
+        self.assertIn("Use a hook and sensory description", prompt)
+        self.assertIn("Ask and answer three questions", prompt)
+        self.assertIn("learning_intention", prompt)
+        self.assertIn("didn't finish final activity", prompt)
         self.assertEqual(fresh.session_state["todays_plan_date"], "2026-10-01")
+
+    def test_unset_status_cannot_be_saved_and_no_note_is_needed(self):
+        app = self.generated_app()
+        self.button(app, "Save Today's Progress").click().run()
+        self.assertEqual(self.store.load_progress_history(), [])
+        self.assertEqual(len(app.warning), 1)
+        self.button(app, "Mark all completed").click().run()
+        self.button(app, "Save Today's Progress").click().run()
+        self.assertEqual(len(self.store.load_progress_history()), 1)
+        self.assertIn("Round five-digit numbers", self.store.load_document("current_learning_position")["Maths"])
+
+    def test_progress_failure_does_not_update_learning_or_report_success(self):
+        app = self.generated_app()
+        before = self.store.load_document("current_learning_position")
+        self.button(app, "Mark all completed").click().run()
+        with patch("persistence.Store.save_lesson_progress", side_effect=StorageError("Database unavailable")):
+            self.button(app, "Save Today's Progress").click().run()
+        self.assertEqual(len(app.success), 0)
+        self.assertEqual(len(app.error), 1)
+        self.assertEqual(self.store.load_progress_history(), [])
+        self.assertEqual(self.store.load_document("current_learning_position"), before)
+        self.assertEqual(app.session_state["current_learning_position"], before)
+
+    def test_history_corrects_individual_lessons_and_preserves_snapshot(self):
+        plan = sample_plan()
+        self.store.save_day_plan(plan)
+        self.store.save_lesson_progress(plan["planning_date"], plan["plan_id"], outcomes(plan))
+        app = self.new_app()
+        self.navigate(app, "Progress History")
+        self.assertEqual(app.radio[2].value, "Partially completed")
+        app.radio[2].set_value("Completed").run()
+        app.text_input[1].set_value("Finished final activity after lunch")
+        self.button(app, "Save Correction").click().run()
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual(len(app.success), 1)
+        saved = self.store.load_progress_history()[0]
+        self.assertEqual(saved["lessons"][1]["status"], "Completed")
+        self.assertEqual(saved["lessons"][1]["learning_intention"], plan["lessons"][1]["learning_intention"])
+        position = self.store.load_document("current_learning_position")["English"]
+        self.assertIn("Finished final activity after lunch", position)
+        self.assertNotIn("didn't finish", position)
+
+    def test_legacy_history_remains_correctable(self):
+        self.store.save_progress("2026-09-30", "Wednesday", "Partially completed", "English unfinished")
+        app = self.new_app()
+        app.date_input[0].set_value(date(2026, 9, 30)).run()
+        self.assertTrue(self.button(app, "✨ Generate Today's Plan").disabled)
+        self.navigate(app, "Progress History")
+        import json
+        self.client.responses.create.return_value = SimpleNamespace(output_text=json.dumps(
+            {"Maths": "", "English": "Final activity completed", "Gaeilge": "", "SESE": "", "Other": ""}))
+        app.radio[1].set_value("Completed").run()
+        app.text_area[0].set_value("Final activity completed")
+        self.button(app, "Save Correction").click().run()
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual(self.store.load_progress_history()[0]["status"], "Completed")
+
+    def test_malformed_generation_keeps_previously_saved_plan(self):
+        app = self.generated_app()
+        before = self.store.load_day("2026-09-30")["plan"]
+        self.client.responses.create.return_value = SimpleNamespace(output_text="not json")
+        self.button(app, "✨ Generate Today's Plan").click().run()
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual(len(app.error), 1)
+        self.assertEqual(self.store.load_day("2026-09-30")["plan"], before)
 
     def test_save_setup_without_reuploads_keeps_all_documents(self):
         app = self.new_app()
