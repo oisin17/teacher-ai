@@ -311,34 +311,28 @@ The plan remains protected by a date-match guard so a plan for one date is not i
 
 ## 9. Current progress/adaptive loop
 
-After a generated plan is displayed, the teacher can currently choose an overall progress status:
+**Updated 2026-09-30 through Priority 2.** A generated plan now contains individual
+lesson objects, used both for the displayed lesson and the saved progress snapshot.
+The Today page restores the saved plan for the chosen school date from PostgreSQL.
 
-- Completed
-- Partially completed
-- Not taught
+- Each planned teaching lesson has Completed / Partially completed / Not taught.
+- Statuses start unset; Mark all completed fills them in without saving progress.
+- Every lesson has an optional short note (up to 300 characters).
+- Save Today's Progress records the entire day once, with the exact original
+  subject, topic, learning intention, time and lesson details per outcome.
+- The progress snapshot and conservative Current Learning evidence save together
+  in one transaction. No note or additional model call is required for the update.
+- Teacher notes override conflicting statuses or planned intentions. Completed
+  means this lesson only; partial work preserves the uncertain stopping point;
+  missed learning remains outstanding and does not imply pupil difficulty.
+- The next generation reads durable Current Learning and detailed recent progress.
+- Historical whole-day records retain their original correction controls.
+- New lesson records can be corrected individually in Progress History, including
+  date correction without overwriting another day's record.
 
-and optionally enter notes describing what actually happened.
-
-On Save Today's Progress:
-- the app inserts/updates a row in `actual_progress`
-- the current implementation stores the record as a "Full day" / "Daily teaching plan" record
-- if notes are present, AI updates the Current Learning Position conservatively
-
-The Current Learning Position is organised by:
-- Maths
-- English
-- Gaeilge
-- SESE
-- Other
-
-Rules already encoded in the update prompt include:
-- teacher progress notes are authoritative
-- preserve existing information not changed by the notes
-- do not invent stopping points, textbook pages or concepts
-- "Completed" means the specific lesson/day, not the whole topic/unit
-- partial completion records only what is safely known
-- not taught due to interruption stays outstanding
-- do not infer pupil difficulty unless the teacher states it
+Current Learning retains the existing Maths / English / Gaeilge / SESE / Other
+fields and remains editable. English strand labels such as Reading and Writing
+map to English; Science, History and Geography map to SESE. See section 19.
 
 ## 10. Adaptive loop test already passed
 
@@ -364,22 +358,16 @@ This demonstrates that the core:
 
 loop works.
 
-## 11. Known limitation of progress tracking
+## 11. Progress granularity milestone
 
-The current single overall daily progress radio is too coarse for a mature V1.
+The former whole-day limitation is resolved for newly generated plans. Historical
+rows do not contain precise lesson intentions and are not automatically converted.
+Never invent lesson content to turn those old rows into granular outcomes.
 
-For example, "Maths fully completed today" does not tell the system exactly what Maths learning was completed.
-
-The eventual design should support more precise lesson/subject-level progress, while remaining extremely quick for teachers to complete.
-
-Likely direction:
-- each planned lesson can have a simple Completed / Partial / Not taught state
-- optional short note per lesson
-- one-click defaults / bulk completion where useful
-- AI can infer a more precise Current Learning Position from the actual lesson content plus teacher correction
-- teacher can always override the inferred position
-
-Do not overcomplicate this before durable persistence is fixed.
+The new form is designed for a quick bulk-complete-and-exceptions workflow.
+Actual teacher timing/usability feedback is still needed to establish whether
+real end-of-day recording consistently takes 30–60 seconds. Do not describe that
+speed as measured from the automated checks.
 
 ## 12. Current planning-generation rules
 
@@ -449,8 +437,8 @@ Then explicitly test:
 - redeploy/restart
 - verify all data remains
 
-### Priority 2 — Better progress granularity
-Move from one whole-day status toward quick subject/lesson-level progress without making end-of-day admin burdensome.
+### Priority 2 — Better progress granularity — implemented 2026-09-30
+Implemented through PR #2. See section 19 for the UI, data model, tests and remaining acceptance scope.
 
 ### Priority 3 — Planning quality
 Improve specificity of next-step planning once the system knows exactly what was completed.
@@ -471,8 +459,8 @@ Incorporate placement feedback and have the V1 ready by February 2027.
 
 ## 16. First task for a new Work session
 
-**Updated:** Priority 1 is completed. Inspect the current code and section 18,
-then continue with Priority 2 (quick subject/lesson-level progress). The original
+**Updated:** Priorities 1 and 2 are implemented. Inspect the current code and
+sections 18–19, then continue with Priority 3 (planning quality). The original
 persistence brief below is retained as acceptance context, not an outstanding task.
 
 Start by inspecting `streamlit_app.py` and the current persistence helpers.
@@ -544,11 +532,91 @@ See `PERSISTENCE_SETUP.md` for the rollout/recovery instructions.
 
 - This remains the existing single-teacher prototype. All sessions access one
   teacher's saved data; no authentication or multi-user system was added.
-- Generated Today's Plan text remains session-based, as in the original app.
-  The four requested context/progress areas are durable.
+- At the end of Priority 1, generated Today's Plan text remained session-based.
+  Priority 2 now also saves structured day plans in PostgreSQL (see section 19).
 - Local AppTest uses mocked AI responses; live generation/update were separately
   exercised through the deployed app.
 - Persistence does not resolve coarse whole-day progress or guarantee every
   generated lesson's quality/timing. Continue with the Current Priority Order.
 - Neon Free is the selected prototype service; no paid upgrade was made.
   Provider limits and backup retention still need review before a production launch.
+
+
+
+## 19. Lesson-level progress rollout — 2026-09-30
+
+### V1 UI and storage
+
+PR #2 adds the compact lesson form: Mark all completed, one status per lesson,
+optional short note, and one Save Today's Progress. Bulk completion submits
+browser drafts to a callback so previously typed notes survive; it does not save
+teaching outcomes. Unset statuses block a save.
+
+The generation prompt retains the existing model and planning rules. A strict
+JSON response now supplies a timetable overview and individual lesson objects.
+The displayed headings, intentions and lesson details are rendered directly from
+those objects, so no second extraction model guesses what was planned.
+`lesson_progress.py` validates the objects and supplies stable IDs and conservative
+Current Learning projection. Storage remains in `persistence.py`.
+
+Additive tables (no new service, secret, authentication or paid infrastructure):
+
+- `day_plans`: school date → structured plan JSON, including plan ID and lesson IDs.
+- `lesson_progress`: Actual Progress daily record ID → original plan identity,
+  overview and all lesson snapshots with recorded status/note.
+- `actual_progress` remains the daily container and preserves historical rows.
+
+Progress and Current Learning commit atomically under the existing advisory lock.
+Current Learning preserves prior teacher context and replaces its generated,
+dated evidence section from durable lesson history. Each entry states the actual
+planned intention and selected outcome, with the teacher note quoted verbatim
+and authoritative. No lesson completion is promoted to whole-unit completion;
+no partial stopping point is guessed. The next AI plan determines the next
+appropriate learning from this evidence and the existing monthly/yearly context.
+
+Retrying does not duplicate rows or learning evidence. Corrections recalculate
+the evidence and remove obsolete outcomes/dates. Explicit Current Learning edits
+become teacher-confirmed context. Regeneration is disabled once progress exists;
+stale plan IDs after another session's regeneration cannot save against a new
+plan. Refresh restores submitted outcomes and the original lesson snapshot.
+Unsaved form inputs remain drafts, and a fresh session may require selecting the
+school date again.
+
+Backup format 2 includes plans and lesson snapshots. Format 1 restore remains
+supported. Restore still validates everything first and refuses a nonempty store.
+See `PERSISTENCE_SETUP.md` for details.
+
+### Validation and live checks
+
+- 30 local checks pass: the original persistence checks plus new storage and
+  Streamlit AppTest coverage for mixed outcomes, no-note updates, bulk completion,
+  draft-note preservation, unset statuses, date guards, refresh/fresh sessions,
+  stale plans, repeated subjects/English strands, corrections, concurrency,
+  additive initialization, atomic rollback and backup compatibility.
+- GitHub Actions runs the same suite plus 20 checks against PostgreSQL 16.
+  The implementation and hot-reload fix passed both test stages.
+- A deployed hot reload initially reused the previous cached storage initializer.
+  Initialization now takes an explicit schema version (currently 2), forcing the
+  additive table creation even when Streamlit preserves its resource cache.
+  The deployed app then started successfully with the existing historical row.
+- The live app generated a six-lesson plan for 2026-10-01 using the real model and
+  existing saved teacher context. The per-lesson form was visually checked.
+- Refresh restored the same six lessons from PostgreSQL without a new model
+  call, and discarded the unsaved test form inputs. The format-2 export contained
+  that saved plan; all four original data areas matched the pre-rollout backup
+  exactly (profile, planning documents, Current Learning and the one old record).
+- Live unset-status validation, Mark all completed, English/Gaeilge exceptions
+  and short notes were exercised. Draft test outcomes were discarded rather than
+  saving fictional future teaching into the teacher's Actual Progress.
+- Full progress save → durable lesson history → Current Learning → next generation
+  inputs is covered by AppTest and storage tests. Live saving of a genuine new
+  lesson record remains a classroom acceptance check; do not claim that test
+  was performed against production data during this rollout.
+
+### Next work
+
+Continue Priority 3 (planning quality), particularly exact programme/text
+specificity when supplied, correct subject/strand sequencing and timetable
+coverage. Do not weaken persistence or substitute speculative completed-topic
+assumptions for the new granular learning evidence. Get teacher feedback on the
+form's actual 30–60-second use in normal end-of-day recording.

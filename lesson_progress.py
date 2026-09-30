@@ -97,7 +97,7 @@ def subject_bucket(subject):
     normal = subject.casefold().strip()
     if normal in ("maths", "math", "mathematics", "matamaitic"):
         return "Maths"
-    if normal in ("english", "literacy", "béarla"):
+    if normal in ("english", "literacy", "béarla", "reading", "writing", "spelling", "phonics", "morphology"):
         return "English"
     if normal in ("gaeilge", "irish"):
         return "Gaeilge"

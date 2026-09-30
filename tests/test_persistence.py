@@ -296,7 +296,7 @@ class StoreTests(unittest.TestCase):
         import copy
         plan = sample_plan()
         second = copy.deepcopy(plan["lessons"][1])
-        second.update(lesson_id="second-english", topic="Reading comprehension", time="13:50–14:20",
+        second.update(lesson_id="second-english", subject="Reading", topic="Reading comprehension", time="13:50–14:20",
                       learning_intention="Explain the character's motive.")
         plan["lessons"].append(second)
         self.store.save_day_plan(plan)
