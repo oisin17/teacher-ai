@@ -10,6 +10,10 @@ from datetime import date
 from pathlib import Path
 
 import psycopg
+from lesson_progress import (
+    LESSON_FIELDS, overall_status, project_learning_position,
+    school_date, validate_lessons, validate_plan,
+)
 
 
 class StorageError(Exception):
@@ -85,6 +89,18 @@ class Store:
                     name TEXT PRIMARY KEY
                 )
             """)
+            # Additive tables leave every historical whole-day record intact.
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS day_plans (
+                    planning_date TEXT PRIMARY KEY, plan_data TEXT NOT NULL
+                )
+            """)
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS lesson_progress (
+                    record_id BIGINT PRIMARY KEY REFERENCES actual_progress(id),
+                    lesson_data TEXT NOT NULL
+                )
+            """)
             marker = connection.execute(
                 "SELECT name FROM storage_migrations WHERE name = %s",
                 ("legacy_sqlite_v1",),
@@ -100,7 +116,7 @@ class Store:
     def _import_legacy(connection, legacy_path):
         # Import only into a completely empty destination, once, atomically.
         # A stale deployment must never overwrite teacher edits in PostgreSQL.
-        for table in [*DOCUMENTS, "actual_progress"]:
+        for table in [*DOCUMENTS, "actual_progress", "day_plans"]:
             if connection.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone():
                 return
         path = Path(legacy_path)
@@ -162,26 +178,158 @@ class Store:
 
     def load_progress_history(self):
         with self._connection() as connection:
-            rows = connection.execute("""
-                SELECT id, planning_date, planning_day, status, notes
-                FROM actual_progress WHERE planning_date IS NOT NULL
-                ORDER BY planning_date ASC, id ASC
-            """).fetchall()
-        return [
-            dict(zip(("id", "planning_date", "planning_day", "status", "notes"),
-                     (*row[:4], row[4] or "")))
-            for row in rows
-        ]
+            return self._history(connection)
+
+    @staticmethod
+    def _history(connection, planning_date=None):
+        condition = "p.planning_date IS NOT NULL" if planning_date is None else "p.planning_date = %s"
+        rows = connection.execute("""
+            SELECT p.id, p.planning_date, p.planning_day, p.status, p.notes, l.lesson_data
+            FROM actual_progress p LEFT JOIN lesson_progress l ON l.record_id = p.id
+            WHERE """ + condition + """
+            ORDER BY p.planning_date ASC, p.id ASC
+        """, () if planning_date is None else (planning_date,)).fetchall()
+        result = []
+        for row in rows:
+            item = dict(zip(("id", "planning_date", "planning_day", "status", "notes"), row[:5]))
+            item["notes"] = item["notes"] or ""
+            if row[5]:
+                item.update(json.loads(row[5]))
+            result.append(item)
+        return result
 
     def load_recent_progress(self, limit=10):
         with self._connection() as connection:
             rows = connection.execute("""
-                SELECT planning_day, subject, lesson_topic, status, notes, planning_date
-                FROM actual_progress
-                ORDER BY COALESCE(planning_date, '') DESC, id DESC LIMIT %s
+                SELECT p.planning_day, p.subject, p.lesson_topic, p.status, p.notes,
+                       p.planning_date, l.lesson_data
+                FROM actual_progress p LEFT JOIN lesson_progress l ON l.record_id = p.id
+                ORDER BY COALESCE(p.planning_date, '') DESC, p.id DESC LIMIT %s
             """, (limit,)).fetchall()
         keys = ("planning_day", "subject", "lesson_topic", "status", "notes", "planning_date")
-        return [dict(zip(keys, row)) for row in rows]
+        result = []
+        for row in rows:
+            item = dict(zip(keys, row[:6]))
+            if row[6]:
+                item.update(json.loads(row[6]))
+            result.append(item)
+        return result
+
+    def load_day(self, planning_date):
+        with self._connection() as connection:
+            rows = self._history(connection, planning_date)
+            progress = rows[-1] if rows else None
+            row = connection.execute(
+                "SELECT plan_data FROM day_plans WHERE planning_date = %s", (planning_date,)
+            ).fetchone()
+            plan = json.loads(row[0]) if row else None
+            # Date corrections keep the original lesson snapshot available.
+            if progress and progress.get("lessons"):
+                plan = {key: progress[key] for key in ("plan_id", "overview", "lessons")}
+                plan["planning_date"] = planning_date
+        return {"plan": plan, "progress": progress}
+
+    def save_day_plan(self, plan):
+        try:
+            validate_plan(plan)
+        except (ValueError, KeyError, TypeError):
+            raise StorageError("The generated lesson list was incomplete. Your saved plan has not been changed.") from None
+        with self._connection() as connection:
+            self._lock(connection)
+            if connection.execute("SELECT id FROM actual_progress WHERE planning_date = %s LIMIT 1",
+                                  (plan["planning_date"],)).fetchone():
+                raise StorageError("Progress already exists for this date. Review or correct it in Progress History.")
+            connection.execute("""
+                INSERT INTO day_plans (planning_date, plan_data) VALUES (%s, %s)
+                ON CONFLICT (planning_date) DO UPDATE SET plan_data = EXCLUDED.plan_data
+            """, (plan["planning_date"], json.dumps(plan, ensure_ascii=False)))
+
+    @staticmethod
+    def _project_position(connection):
+        row = connection.execute("SELECT position_data FROM current_learning_position WHERE id = 1").fetchone()
+        existing = json.loads(row[0]) if row else {}
+        updated = project_learning_position(existing, Store._history(connection))
+        connection.execute("""
+            INSERT INTO current_learning_position (id, position_data) VALUES (1, %s)
+            ON CONFLICT (id) DO UPDATE SET position_data = EXCLUDED.position_data
+        """, (json.dumps(updated, ensure_ascii=False),))
+        return updated
+
+    def save_lesson_progress(self, planning_date, plan_id, lessons):
+        try:
+            school_date(planning_date)
+            validate_lessons(lessons, progress=True)
+        except (ValueError, KeyError, TypeError):
+            raise StorageError("Choose a status for every lesson and keep notes under 300 characters. Nothing has been saved.") from None
+        with self._connection() as connection:
+            self._lock(connection)
+            rows = self._history(connection, planning_date)
+            existing = rows[-1] if rows else None
+            if existing and not existing.get("lessons"):
+                raise StorageError("This date has a historical whole-day record. Correct it in Progress History.")
+            if existing:
+                plan = existing
+            else:
+                row = connection.execute("SELECT plan_data FROM day_plans WHERE planning_date = %s",
+                                         (planning_date,)).fetchone()
+                plan = json.loads(row[0]) if row else None
+            if not plan or plan["plan_id"] != plan_id or [
+                {key: item[key] for key in LESSON_FIELDS} for item in plan["lessons"]
+            ] != [{key: item[key] for key in LESSON_FIELDS} for item in lessons]:
+                raise StorageError("The saved plan changed in another session. Refresh before recording progress.")
+            payload = {"plan_id": plan_id, "overview": plan["overview"], "lessons": lessons}
+            status = overall_status(lessons)
+            notes = "\n".join(f"{item['subject']} — {item['topic']}: {item['status']}"
+                              + (f". {item['note']}" if item["note"] else "") for item in lessons)
+            day = date.fromisoformat(planning_date).strftime("%A")
+            if existing:
+                record_id = existing["id"]
+                connection.execute("UPDATE actual_progress SET status = %s, notes = %s WHERE id = %s",
+                                   (status, notes, record_id))
+            else:
+                record_id = connection.execute("""
+                    INSERT INTO actual_progress (planning_day, subject, lesson_topic, status, notes, planning_date)
+                    VALUES (%s, 'Full day', 'Individual planned lessons', %s, %s, %s) RETURNING id
+                """, (day, status, notes, planning_date)).fetchone()[0]
+            connection.execute("""
+                INSERT INTO lesson_progress (record_id, lesson_data) VALUES (%s, %s)
+                ON CONFLICT (record_id) DO UPDATE SET lesson_data = EXCLUDED.lesson_data
+            """, (record_id, json.dumps(payload, ensure_ascii=False)))
+            # Progress and learning evidence commit together; no AI call can
+            # leave a paid/failed update between the two durable writes.
+            position = self._project_position(connection)
+        return position
+
+    def correct_lesson_progress(self, record_id, planning_date, lessons):
+        try:
+            school_date(planning_date)
+            validate_lessons(lessons, progress=True)
+        except (ValueError, KeyError, TypeError):
+            raise StorageError("Invalid lesson correction. Nothing has been saved.") from None
+        with self._connection() as connection:
+            self._lock(connection)
+            existing = next((row for row in self._history(connection) if row["id"] == record_id), None)
+            if not existing or not existing.get("lessons"):
+                raise StorageError("This lesson record no longer exists. Refresh and try again.")
+            if [{key: item[key] for key in LESSON_FIELDS} for item in existing["lessons"]] != [
+                {key: item[key] for key in LESSON_FIELDS} for item in lessons
+            ]:
+                raise StorageError("The lesson snapshot changed. Refresh before correcting it.")
+            if connection.execute("SELECT id FROM actual_progress WHERE planning_date = %s AND id != %s LIMIT 1",
+                                  (planning_date, record_id)).fetchone():
+                return None
+            payload = {key: existing[key] for key in ("plan_id", "overview")}
+            payload["lessons"] = lessons
+            notes = "\n".join(f"{item['subject']} — {item['topic']}: {item['status']}"
+                              + (f". {item['note']}" if item["note"] else "") for item in lessons)
+            connection.execute("""
+                UPDATE actual_progress SET planning_date = %s, planning_day = %s,
+                status = %s, notes = %s WHERE id = %s
+            """, (planning_date, date.fromisoformat(planning_date).strftime("%A"),
+                  overall_status(lessons), notes, record_id))
+            connection.execute("UPDATE lesson_progress SET lesson_data = %s WHERE record_id = %s",
+                               (json.dumps(payload, ensure_ascii=False), record_id))
+            return self._project_position(connection)
 
     def save_progress(self, planning_date, planning_day, status, notes):
         with self._connection() as connection:
@@ -190,6 +338,9 @@ class Store:
                 SELECT id FROM actual_progress WHERE planning_date = %s
                 ORDER BY id DESC LIMIT 1
             """, (planning_date,)).fetchone()
+            if existing and connection.execute("SELECT record_id FROM lesson_progress WHERE record_id = %s",
+                                               (existing[0],)).fetchone():
+                raise StorageError("This date has individual lesson progress. Use the lesson correction controls.")
             values = (planning_day, "Full day", "Daily teaching plan", status, notes)
             if existing:
                 connection.execute("""
@@ -208,6 +359,8 @@ class Store:
     def correct_progress(self, record_id, planning_date, planning_day, status, notes):
         with self._connection() as connection:
             self._lock(connection)
+            if connection.execute("SELECT record_id FROM lesson_progress WHERE record_id = %s", (record_id,)).fetchone():
+                raise StorageError("Use the individual lesson controls to correct this record.")
             conflict = connection.execute("""
                 SELECT id FROM actual_progress
                 WHERE planning_date = %s AND id != %s LIMIT 1
@@ -226,7 +379,7 @@ class Store:
     def export_backup(self):
         with self._connection() as connection:
             self._lock(connection)
-            backup = {"format_version": 1}
+            backup = {"format_version": 2}
             for table, column in DOCUMENTS.items():
                 row = connection.execute(
                     f"SELECT {column} FROM {table} WHERE id = 1"
@@ -238,12 +391,21 @@ class Store:
                 "planning_date FROM actual_progress ORDER BY id"
             ).fetchall()
             backup["actual_progress"] = [dict(zip(keys, row)) for row in rows]
+            lesson_rows = {row[0]: json.loads(row[1]) for row in connection.execute(
+                "SELECT record_id, lesson_data FROM lesson_progress"
+            ).fetchall()}
+            for row in backup["actual_progress"]:
+                if row["id"] in lesson_rows:
+                    row.update(lesson_rows[row["id"]])
+            backup["day_plans"] = [json.loads(row[0]) for row in connection.execute(
+                "SELECT plan_data FROM day_plans ORDER BY planning_date"
+            ).fetchall()]
         return backup
 
     def restore_backup(self, backup):
         # Validate the whole upload before starting any write.
         try:
-            if not isinstance(backup, dict) or backup.get("format_version") != 1:
+            if not isinstance(backup, dict) or backup.get("format_version") not in (1, 2):
                 raise ValueError("Unsupported backup")
             if not all(isinstance(backup.get(table), dict) for table in DOCUMENTS):
                 raise ValueError("Missing documents")
@@ -264,12 +426,26 @@ class Store:
                 if row.get("planning_date") is not None:
                     if date.fromisoformat(row["planning_date"]).isoformat() != row["planning_date"]:
                         raise ValueError("Invalid school date")
+                if "lessons" in row:
+                    validate_plan({**row, "planning_date": row["planning_date"]})
+                    validate_lessons(row["lessons"], progress=True)
+                    if overall_status(row["lessons"]) != row["status"]:
+                        raise ValueError("Inconsistent day summary")
+            plans = backup.get("day_plans", [])
+            if not isinstance(plans, list):
+                raise ValueError("Invalid plans")
+            dates = set()
+            for plan in plans:
+                validate_plan(plan)
+                if plan["planning_date"] in dates:
+                    raise ValueError("Duplicate saved plan")
+                dates.add(plan["planning_date"])
         except (ValueError, KeyError, TypeError):
             raise StorageError("This is not a valid Teacher AI backup. No saved data has been changed.") from None
         with self._connection() as connection:
             self._lock(connection)
             # Never overwrite existing durable teacher edits through restore.
-            for table in [*DOCUMENTS, "actual_progress"]:
+            for table in [*DOCUMENTS, "actual_progress", "day_plans", "lesson_progress"]:
                 if connection.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone():
                     return False
             for table, column in DOCUMENTS.items():
@@ -278,11 +454,18 @@ class Store:
                     (json.dumps(backup[table], ensure_ascii=False),),
                 )
             for row in rows:
-                connection.execute("""
+                record_id = connection.execute("""
                     INSERT INTO actual_progress
                     (planning_day, subject, lesson_topic, status, notes, planning_date)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
                 """, tuple(row.get(key) for key in (
                     "planning_day", "subject", "lesson_topic", "status", "notes", "planning_date"
-                )))
+                ))).fetchone()[0]
+                if "lessons" in row:
+                    payload = {key: row[key] for key in ("plan_id", "overview", "lessons")}
+                    connection.execute("INSERT INTO lesson_progress (record_id, lesson_data) VALUES (%s, %s)",
+                                       (record_id, json.dumps(payload, ensure_ascii=False)))
+            for plan in plans:
+                connection.execute("INSERT INTO day_plans (planning_date, plan_data) VALUES (%s, %s)",
+                                   (plan["planning_date"], json.dumps(plan, ensure_ascii=False)))
         return True

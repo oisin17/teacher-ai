@@ -11,6 +11,8 @@ from urllib.parse import urlparse
 
 import psycopg
 from persistence import DOCUMENTS, Store, StorageError
+from fixtures import sample_plan, outcomes
+from lesson_progress import EVIDENCE_MARKER
 
 
 class SQLiteAdapter:
@@ -55,7 +57,7 @@ class StoreTests(unittest.TestCase):
                 raise RuntimeError("Integration tests only accept a local test_teacher_ai database")
             self.real_connect = psycopg.connect
             with self.real_connect(self.url) as connection:
-                for table in [*DOCUMENTS, "actual_progress", "storage_migrations"]:
+                for table in ["lesson_progress", "day_plans", *DOCUMENTS, "actual_progress", "storage_migrations"]:
                     connection.execute(f"DROP TABLE IF EXISTS {table}")
             def connect(url, **kwargs):
                 # The isolated CI localhost service has no TLS; production
@@ -211,6 +213,141 @@ class StoreTests(unittest.TestCase):
                     "status": "Completed", "planning_date": "not-a-date"}],
             })
         self.assertEqual(self.store.load_document("teacher_profile"), {})
+
+    def save_sample(self, day="2026-09-30"):
+        plan = sample_plan(day)
+        self.store.save_day_plan(plan)
+        position = self.store.save_lesson_progress(day, plan["plan_id"], outcomes(plan))
+        return plan, position
+
+    def test_lesson_snapshot_and_learning_survive_runtime_loss_and_retry(self):
+        self.store.save_document("current_learning_position", {"Maths": "Addition completed", "Other": "Friday Art"})
+        plan, position = self.save_sample()
+        fresh = Store(self.url)
+        fresh.initialise(self.root / "missing-again.db")
+        self.assertEqual(fresh.load_day(plan["planning_date"])["progress"]["lessons"], outcomes(plan))
+        self.assertEqual(fresh.load_recent_progress()[0]["lessons"], outcomes(plan))
+        self.assertEqual(fresh.load_document("current_learning_position"), position)
+        self.assertIn("Addition completed", position["Maths"])
+        self.assertEqual(position["Other"], "Friday Art")
+        self.assertEqual(fresh.save_lesson_progress(plan["planning_date"], plan["plan_id"], outcomes(plan)), position)
+        self.assertEqual(len(fresh.load_progress_history()), 1)
+
+    def test_plan_regeneration_rejects_stale_lesson_ids_and_preserves_saved_progress(self):
+        first = sample_plan()
+        self.store.save_day_plan(first)
+        replacement = sample_plan()
+        self.store.save_day_plan(replacement)
+        with self.assertRaises(StorageError):
+            self.store.save_lesson_progress(first["planning_date"], first["plan_id"], outcomes(first))
+        self.assertEqual(self.store.load_progress_history(), [])
+        self.store.save_lesson_progress(replacement["planning_date"], replacement["plan_id"], outcomes(replacement))
+        with self.assertRaises(StorageError):
+            self.store.save_day_plan(sample_plan())
+        with self.assertRaises(StorageError):
+            self.store.save_progress("2026-09-30", "Wednesday", "Completed", "Cannot replace lessons")
+        tampered = outcomes(replacement)
+        tampered[0]["learning_intention"] = "Finish the whole unit"
+        with self.assertRaises(StorageError):
+            self.store.save_lesson_progress(replacement["planning_date"], replacement["plan_id"], tampered)
+        self.assertEqual(self.store.load_progress_history()[0]["lessons"], outcomes(replacement))
+
+    def test_lessons_and_learning_rollback_together_if_update_fails(self):
+        plan = sample_plan()
+        self.store.save_day_plan(plan)
+        self.store.save_document("current_learning_position", {"English": "Known starting position"})
+        with patch.object(Store, "_project_position", side_effect=RuntimeError("private connection string")):
+            with self.assertRaises(StorageError) as error:
+                self.store.save_lesson_progress(plan["planning_date"], plan["plan_id"], outcomes(plan))
+        self.assertNotIn("private", str(error.exception))
+        self.assertEqual(self.store.load_progress_history(), [])
+        self.assertEqual(self.store.load_document("current_learning_position"), {"English": "Known starting position"})
+
+    def test_concurrent_lesson_saves_keep_one_day_and_matching_learning(self):
+        plan = sample_plan()
+        self.store.save_day_plan(plan)
+        def save(index):
+            recorded = outcomes(plan)
+            recorded[1]["note"] = f"Unfinished detail {index}"
+            return self.store.save_lesson_progress(plan["planning_date"], plan["plan_id"], recorded)
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            list(pool.map(save, range(8)))
+        history = self.store.load_progress_history()
+        self.assertEqual(len(history), 1)
+        self.assertIn(history[0]["lessons"][1]["note"], self.store.load_document("current_learning_position")["English"])
+
+    def test_correction_moves_date_and_removes_obsolete_outcomes(self):
+        plan, old_position = self.save_sample()
+        row = self.store.load_progress_history()[0]
+        changed = outcomes(plan)
+        changed[1].update(status="Completed", note="Finished the final activity")
+        updated = self.store.correct_lesson_progress(row["id"], "2026-09-29", changed)
+        self.assertNotIn("didn't finish", updated["English"])
+        self.assertNotIn("2026-09-30", updated["English"])
+        self.assertIn("2026-09-29", updated["English"])
+        self.assertIn("Finished the final activity", updated["English"])
+        self.assertEqual(self.store.load_day("2026-09-29")["plan"]["lessons"], changed)
+        self.store.save_progress("2026-10-01", "Thursday", "Completed", "Legacy")
+        before = self.store.export_backup()
+        self.assertIsNone(self.store.correct_lesson_progress(row["id"], "2026-10-01", changed))
+        self.assertEqual(self.store.export_backup(), before)
+
+    def test_repeated_subjects_are_distinct_and_notes_override_planned_learning(self):
+        import copy
+        plan = sample_plan()
+        second = copy.deepcopy(plan["lessons"][1])
+        second.update(lesson_id="second-english", topic="Reading comprehension", time="13:50–14:20",
+                      learning_intention="Explain the character's motive.")
+        plan["lessons"].append(second)
+        self.store.save_day_plan(plan)
+        recorded = outcomes(plan)
+        recorded[-1].update(status="Completed", note="Changed lesson: practised spelling instead; no reading taught")
+        position = self.store.save_lesson_progress(plan["planning_date"], plan["plan_id"], recorded)
+        self.assertIn("Narrative openings", position["English"])
+        self.assertIn("Reading comprehension", position["English"])
+        self.assertIn("authoritative): Changed lesson", position["English"])
+        self.assertIn("no reading taught", position["English"])
+        self.assertEqual(len(self.store.load_progress_history()[0]["lessons"]), 4)
+
+    def test_new_backup_roundtrip_preserves_plans_and_lesson_snapshots(self):
+        plan, position = self.save_sample()
+        backup = self.store.export_backup()
+        self.assertEqual(backup["format_version"], 2)
+        with self.connect(self.url) as connection:
+            for table in ["lesson_progress", "day_plans", "actual_progress", *DOCUMENTS]:
+                connection.execute(f"DELETE FROM {table}")
+        self.assertTrue(self.store.restore_backup(backup))
+        restored = self.store.load_progress_history()[0]
+        self.assertEqual(restored["lessons"], outcomes(plan))
+        self.assertEqual(restored["plan_id"], plan["plan_id"])
+        self.assertEqual(self.store.load_day(plan["planning_date"])["plan"]["plan_id"], plan["plan_id"])
+        self.assertEqual(self.store.load_document("current_learning_position"), position)
+        self.assertFalse(self.store.restore_backup(backup))
+
+    def test_invalid_lesson_or_backup_leaves_all_data_unchanged(self):
+        import copy
+        plan, position = self.save_sample()
+        before = self.store.export_backup()
+        recorded = outcomes(plan)
+        recorded[0]["status"] = None
+        with self.assertRaises(StorageError):
+            self.store.save_lesson_progress(plan["planning_date"], plan["plan_id"], recorded)
+        self.assertEqual(self.store.export_backup(), before)
+        bad = copy.deepcopy(before)
+        bad["actual_progress"][0]["lessons"][0]["note"] = "x" * 301
+        with self.assertRaises(StorageError):
+            self.store.restore_backup(bad)
+        self.assertEqual(self.store.export_backup(), before)
+
+    def test_new_progress_cannot_replace_historical_whole_day(self):
+        self.store.save_progress("2026-09-30", "Wednesday", "Completed", "Teacher confirmed original")
+        before = self.store.export_backup()
+        plan = sample_plan()
+        with self.assertRaises(StorageError):
+            self.store.save_day_plan(plan)
+        with self.assertRaises(StorageError):
+            self.store.save_lesson_progress(plan["planning_date"], plan["plan_id"], outcomes(plan))
+        self.assertEqual(self.store.export_backup(), before)
 
 
 if __name__ == "__main__":
