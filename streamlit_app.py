@@ -325,10 +325,15 @@ if page == "Today":
         "Your teaching day will appear here based on your timetable, "
         "plans and actual classroom progress."
     )
-    default_date = date.today()
+    # Keep the selected planning date stable across Streamlit widget reruns.
+    # Without an explicit session-state key, interactions elsewhere on this
+    # page (such as the progress radio) can rebuild the date input from today.
+    if "planning_date" not in st.session_state:
+        st.session_state["planning_date"] = date.today()
+
     planning_date = st.date_input(
         "Which school date are you planning?",
-        value=default_date,
+        key="planning_date",
         format="DD/MM/YYYY"
     )
     planning_day = planning_date.strftime("%A")
