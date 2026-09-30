@@ -1068,3 +1068,43 @@ elif page == "Planning Setup":
         save_planning_setup(st.session_state["planning_setup"])
 
         st.success("Planning setup saved and documents processed.")
+
+
+
+# ---------- SAFE CUTOVER BACKUP ----------
+
+with st.expander("Saved data backup"):
+    st.caption("Download your saved class context and progress before changing deployment settings.")
+    if st.button("Prepare saved data backup"):
+        connection = sqlite3.connect("teacher_ai.db")
+        connection.row_factory = sqlite3.Row
+        try:
+            connection.execute("BEGIN")
+            backup = {"format_version": 1}
+            for table, column in (
+                ("teacher_profile", "profile_data"),
+                ("planning_setup", "planning_data"),
+                ("current_learning_position", "position_data"),
+            ):
+                row = connection.execute(
+                    f"SELECT {column} FROM {table} WHERE id = 1"
+                ).fetchone()
+                backup[table] = json.loads(row[column]) if row else {}
+            backup["actual_progress"] = [
+                dict(row) for row in connection.execute(
+                    "SELECT * FROM actual_progress ORDER BY id"
+                ).fetchall()
+            ]
+            st.session_state["cutover_backup"] = json.dumps(
+                backup, ensure_ascii=False, indent=2
+            )
+        finally:
+            connection.close()
+    if "cutover_backup" in st.session_state:
+        st.download_button(
+            "Download saved data backup",
+            data=st.session_state["cutover_backup"],
+            file_name="teacher_ai_saved_data_backup.json",
+            mime="application/json",
+            on_click="ignore",
+        )
