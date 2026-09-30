@@ -30,11 +30,13 @@ except StorageError as error:
 
 
 @st.cache_resource
-def initialise_storage(database_url):
+def initialise_storage(database_url, schema_version):
+    # A code hot reload can preserve Streamlit's resource cache. Bump this
+    # explicit key whenever additive tables/schema must be initialized.
     Store(database_url).initialise()
 
 
-storage_call(initialise_storage, st.secrets.get("DATABASE_URL", ""))
+storage_call(initialise_storage, st.secrets.get("DATABASE_URL", ""), 2)
 
 
 def save_teacher_profile(profile):

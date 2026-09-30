@@ -349,6 +349,17 @@ class StoreTests(unittest.TestCase):
             self.store.save_lesson_progress(plan["planning_date"], plan["plan_id"], outcomes(plan))
         self.assertEqual(self.store.export_backup(), before)
 
+    def test_additive_initialisation_preserves_preexisting_documents_and_history(self):
+        self.store.save_document("teacher_profile", {"class_level": "5th Class", "pupil_count": 22})
+        self.store.save_progress("2026-09-30", "Wednesday", "Partially completed", "Original teacher note")
+        with self.connect(self.url) as connection:
+            connection.execute("DROP TABLE lesson_progress")
+            connection.execute("DROP TABLE day_plans")
+        self.store.initialise(self.root / "missing.db")
+        self.assertEqual(self.store.load_document("teacher_profile")["pupil_count"], 22)
+        self.assertEqual(self.store.load_day("2026-09-30")["progress"]["notes"], "Original teacher note")
+        self.assertIsNone(self.store.load_day("2026-09-30")["plan"])
+
 
 if __name__ == "__main__":
     unittest.main()
