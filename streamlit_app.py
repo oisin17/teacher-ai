@@ -3,173 +3,63 @@ from openai import OpenAI
 import io
 from pypdf import PdfReader
 from docx import Document
-import sqlite3
+from persistence import Store, StorageError
 import json
 from datetime import date, timedelta
 
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-def init_database():
-    connection = sqlite3.connect("teacher_ai.db")
-    cursor = connection.cursor()
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS teacher_profile (
-            id INTEGER PRIMARY KEY,
-            profile_data TEXT NOT NULL
-        )
-    """)    
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS actual_progress (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            planning_day TEXT NOT NULL,
-            subject TEXT NOT NULL,
-            lesson_topic TEXT,
-            status TEXT NOT NULL,
-            notes TEXT
-        )
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS planning_setup (
-            id INTEGER PRIMARY KEY,
-            planning_data TEXT NOT NULL
-        )
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS current_learning_position (
-            id INTEGER PRIMARY KEY,
-            position_data TEXT NOT NULL
-        )
-    """)
-    # V0 migration: attach a real school date to progress records.
-    cursor.execute("PRAGMA table_info(actual_progress)")
-    progress_columns = [row[1] for row in cursor.fetchall()]
-    if "planning_date" not in progress_columns:
-        cursor.execute("ALTER TABLE actual_progress ADD COLUMN planning_date TEXT")
-
-    connection.commit()
-    connection.close()
+def storage_call(operation, *args):
+    try:
+        return operation(*args)
+    except StorageError as error:
+        st.error(str(error))
+        st.stop()
 
 
-init_database()
+# No local fallback: production saves must go to the durable database.
+try:
+    store = Store(st.secrets.get("DATABASE_URL", ""))
+except StorageError as error:
+    st.error(str(error))
+    st.stop()
+
+
+@st.cache_resource
+def initialise_storage(database_url):
+    Store(database_url).initialise()
+
+
+storage_call(initialise_storage, st.secrets.get("DATABASE_URL", ""))
+
 
 def save_teacher_profile(profile):
-    connection = sqlite3.connect("teacher_ai.db")
-    cursor = connection.cursor()
-
-    profile_json = json.dumps(profile)
-
-    cursor.execute(
-        """
-        INSERT OR REPLACE INTO teacher_profile (id, profile_data)
-        VALUES (1, ?)
-        """,
-        (profile_json,)
-    )
-
-    connection.commit()
-    connection.close()
+    storage_call(store.save_document, "teacher_profile", profile)
 
 
 def load_teacher_profile():
-    connection = sqlite3.connect("teacher_ai.db")
-    cursor = connection.cursor()
-
-    cursor.execute(
-        "SELECT profile_data FROM teacher_profile WHERE id = 1"
-    )
-
-    result = cursor.fetchone()
-    connection.close()
-
-    if result:
-        return json.loads(result[0])
-
-    return {}
+    return storage_call(store.load_document, "teacher_profile")
 
 
 def save_planning_setup(planning_setup):
-    connection = sqlite3.connect("teacher_ai.db")
-    cursor = connection.cursor()
+    storage_call(store.save_document, "planning_setup", planning_setup)
 
-    planning_json = json.dumps(planning_setup)
-
-    cursor.execute(
-        """
-        INSERT OR REPLACE INTO planning_setup (id, planning_data)
-        VALUES (1, ?)
-        """,
-        (planning_json,)
-    )
-
-    connection.commit()
-    connection.close()
 
 def load_planning_setup():
-    connection = sqlite3.connect("teacher_ai.db")
-    cursor = connection.cursor()
+    return storage_call(store.load_document, "planning_setup")
 
-    cursor.execute(
-        "SELECT planning_data FROM planning_setup WHERE id = 1"
-    )
-
-    result = cursor.fetchone()
-    connection.close()
-
-    if result:
-        return json.loads(result[0])
-
-    return {}
 
 def save_current_learning_position(position):
-    connection = sqlite3.connect("teacher_ai.db")
-    cursor = connection.cursor()
-    position_json = json.dumps(position)
-    cursor.execute(
-        """
-        INSERT OR REPLACE INTO current_learning_position (id, position_data)
-        VALUES (1, ?)
-        """,
-        (position_json,)
-    )
-    connection.commit()
-    connection.close()
+    storage_call(store.save_document, "current_learning_position", position)
+
 
 def load_current_learning_position():
-    connection = sqlite3.connect("teacher_ai.db")
-    cursor = connection.cursor()
-    cursor.execute(
-        "SELECT position_data FROM current_learning_position WHERE id = 1"
-    )
-    result = cursor.fetchone()
-    connection.close()
-    if result:
-        return json.loads(result[0])
-    return {}
+    return storage_call(store.load_document, "current_learning_position")
+
 
 def load_progress_history():
-    connection = sqlite3.connect("teacher_ai.db")
-    cursor = connection.cursor()
-    cursor.execute(
-        """
-        SELECT id, planning_date, planning_day, status, notes
-        FROM actual_progress
-        WHERE planning_date IS NOT NULL
-        ORDER BY planning_date ASC, id ASC
-        """
-    )
-    rows = cursor.fetchall()
-    connection.close()
-    return [
-        {
-            "id": row[0],
-            "planning_date": row[1],
-            "planning_day": row[2],
-            "status": row[3],
-            "notes": row[4] or ""
-        }
-        for row in rows
-    ]
+    return storage_call(store.load_progress_history)
+
 
 def rebuild_current_learning_from_history():
     history = load_progress_history()
@@ -200,35 +90,13 @@ def rebuild_current_learning_from_history():
     required_keys = ["Maths", "English", "Gaeilge", "SESE", "Other"]
     if not all(key in rebuilt and isinstance(rebuilt[key], str) for key in required_keys):
         raise ValueError("Invalid rebuilt Current Learning Position")
-    st.session_state["current_learning_position"] = rebuilt
     save_current_learning_position(rebuilt)
+    st.session_state["current_learning_position"] = rebuilt
     return rebuilt
 
 def load_recent_progress(limit=10):
-    connection = sqlite3.connect("teacher_ai.db")
-    cursor = connection.cursor()
-    cursor.execute(
-        """
-        SELECT planning_day, subject, lesson_topic, status, notes, planning_date
-        FROM actual_progress
-        ORDER BY COALESCE(planning_date, '') DESC, id DESC
-        LIMIT ?
-        """,
-        (limit,)
-    )
-    rows = cursor.fetchall()
-    connection.close()
-    return [
-        {
-            "planning_day": row[0],
-            "subject": row[1],
-            "lesson_topic": row[2],
-            "status": row[3],
-            "notes": row[4],
-            "planning_date": row[5]
-        }
-        for row in rows
-    ]
+    return storage_call(store.load_recent_progress, limit)
+
 
 if "teacher_profile" not in st.session_state:
     st.session_state["teacher_profile"] = load_teacher_profile()
@@ -486,59 +354,13 @@ if page == "Today":
         )
     
         if st.button("Save Today's Progress"):
-            connection = sqlite3.connect("teacher_ai.db")
-            cursor = connection.cursor()
-    
-            planning_date_text = plan_date.isoformat()
-
-            cursor.execute(
-                """
-                SELECT id FROM actual_progress
-                WHERE planning_date = ?
-                ORDER BY id DESC
-                LIMIT 1
-                """,
-                (planning_date_text,)
+            progress_was_updated = storage_call(
+                store.save_progress,
+                plan_date.isoformat(),
+                str(plan_day),
+                progress_status,
+                progress_notes,
             )
-            existing_progress = cursor.fetchone()
-
-            if existing_progress:
-                cursor.execute(
-                    """
-                    UPDATE actual_progress
-                    SET planning_day = ?, subject = ?, lesson_topic = ?, status = ?, notes = ?
-                    WHERE id = ?
-                    """,
-                    (
-                        str(plan_day),
-                        "Full day",
-                        "Daily teaching plan",
-                        progress_status,
-                        progress_notes,
-                        existing_progress[0]
-                    )
-                )
-                progress_was_updated = True
-            else:
-                cursor.execute(
-                    """
-                    INSERT INTO actual_progress
-                    (planning_day, subject, lesson_topic, status, notes, planning_date)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        str(plan_day),
-                        "Full day",
-                        "Daily teaching plan",
-                        progress_status,
-                        progress_notes,
-                        planning_date_text
-                    )
-                )
-                progress_was_updated = False
-    
-            connection.commit()
-            connection.close()
 
             # Use the teacher's account of what actually happened to update
             # Teacher AI's persistent understanding of the class position.
@@ -578,8 +400,8 @@ if page == "Today":
                         and isinstance(updated_position[key], str)
                         for key in required_keys
                     ):
-                        st.session_state["current_learning_position"] = updated_position
                         save_current_learning_position(updated_position)
+                        st.session_state["current_learning_position"] = updated_position
                         if progress_was_updated:
                             st.success(
                                 "Progress for this date was updated and Current Learning Position refreshed."
@@ -677,44 +499,20 @@ elif page == "Progress History":
         )
 
         if st.button("Save Correction", type="primary"):
-            connection = sqlite3.connect("teacher_ai.db")
-            cursor = connection.cursor()
-
-            new_date_text = edited_date.isoformat()
-            cursor.execute(
-                """
-                SELECT id FROM actual_progress
-                WHERE planning_date = ? AND id != ?
-                LIMIT 1
-                """,
-                (new_date_text, selected["id"])
+            corrected = storage_call(
+                store.correct_progress,
+                selected["id"],
+                edited_date.isoformat(),
+                edited_day,
+                edited_status,
+                edited_notes,
             )
-            conflict = cursor.fetchone()
-
-            if conflict:
-                connection.close()
+            if not corrected:
                 st.error(
                     "Another progress record already exists for that date. "
                     "Choose the existing date instead of creating a duplicate."
                 )
             else:
-                cursor.execute(
-                    """
-                    UPDATE actual_progress
-                    SET planning_date = ?, planning_day = ?, status = ?, notes = ?
-                    WHERE id = ?
-                    """,
-                    (
-                        new_date_text,
-                        edited_day,
-                        edited_status,
-                        edited_notes,
-                        selected["id"]
-                    )
-                )
-                connection.commit()
-                connection.close()
-
                 try:
                     rebuild_current_learning_from_history()
                     st.success(
@@ -772,8 +570,8 @@ elif page == "Current Learning":
             "SESE": sese_position,
             "Other": other_position
         }
-        st.session_state["current_learning_position"] = position
         save_current_learning_position(position)
+        st.session_state["current_learning_position"] = position
         st.success("Current Learning Position saved.")
 
 # ---------- TEACHER PROFILE ----------
@@ -1014,8 +812,8 @@ elif page == "Teacher Profile":
             "recurring_arrangements": recurring
         }
 
-        st.session_state["teacher_profile"] = profile
         save_teacher_profile(profile)
+        st.session_state["teacher_profile"] = profile
 
         st.success("Teacher Profile saved.")
 
@@ -1056,15 +854,27 @@ elif page == "Planning Setup":
 
     if st.button("Save Planning Setup", type="primary"):
 
-        timetable_text = extract_text_from_file(timetable)
-        monthly_plan_text = extract_text_from_file(monthly_plan)
-        yearly_plan_text = extract_text_from_file(yearly_plan)
+        # No new upload means retain the existing saved document.
+        # Reject unreadable replacements instead of erasing saved plan text.
+        planning_setup = dict(saved_planning)
+        for field, uploaded in (
+            ("timetable_text", timetable),
+            ("monthly_plan_text", monthly_plan),
+            ("yearly_plan_text", yearly_plan),
+        ):
+            if uploaded is not None:
+                extracted = extract_text_from_file(uploaded)
+                if not extracted.strip():
+                    st.error(
+                        f"Could not extract text from {uploaded.name}. "
+                        "Please upload a readable PDF or Word document. "
+                        "Your saved planning documents have not been changed."
+                    )
+                    st.stop()
+                planning_setup[field] = extracted
+            else:
+                planning_setup.setdefault(field, "")
 
-        st.session_state["planning_setup"] = {
-            "timetable_text": timetable_text,
-            "monthly_plan_text": monthly_plan_text,
-            "yearly_plan_text": yearly_plan_text
-        }
-        save_planning_setup(st.session_state["planning_setup"])
-
+        save_planning_setup(planning_setup)
+        st.session_state["planning_setup"] = planning_setup
         st.success("Planning setup saved and documents processed.")
