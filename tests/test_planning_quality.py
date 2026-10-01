@@ -27,6 +27,8 @@ class QualityTests(unittest.TestCase):
         with self.assertRaises(QualityFailure) as raised:quality_gate(p,c,client,{})
         self.assertEqual(raised.exception.report['state'],'Blocked');self.assertEqual(client.responses.create.call_count,1)
         self.assertIn('phase_duration',{f['code'] for f in raised.exception.report['findings']})
+        timing = next(f for f in raised.exception.report['findings'] if f['code']=='phase_duration')
+        self.assertIn('requires exactly',timing['message']); self.assertIn('supplied total:',timing['message'])
 
     def test_repair_pass_and_metadata(self):
         c=context();p=candidate(c);fixed=copy.deepcopy(p);p['lessons'][0]['phases'][0]['minutes']=50

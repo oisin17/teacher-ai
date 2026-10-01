@@ -37,7 +37,7 @@ if refresh_lessons or getattr(persistence, "PERSISTENCE_VERSION", None) != 11:
     importlib.reload(persistence)
 from persistence import Store, StorageError
 import planning_quality
-if getattr(planning_quality, "QUALITY_MODULE_VERSION", None) != 2:
+if getattr(planning_quality, "QUALITY_MODULE_VERSION", None) != 3:
     importlib.reload(planning_quality)
 from planning_quality import quality_gate, QualityFailure
 import json
@@ -525,7 +525,7 @@ if page == "Today":
                             "would be better.\n"
                             "- Keep teacher-facing plans concise and easy to scan.\n"
                             "- Avoid long teacher scripts.\n"
-                            "- Lesson phase timings must add exactly to the available lesson time.\n"
+                            "- First assign matching clock times to overview and lessons. Calculate each end minus start; allocate positive phase minutes adding exactly to that number, including setup/tidy-up. Verify the arithmetic for EVERY lesson before returning.\n"
                             "- Include differentiation based on the Teacher Profile.\n"
                             "- Include an early-finisher activity where useful.\n"
                             "- If information needed to plan safely is genuinely unknown, "

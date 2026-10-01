@@ -9,7 +9,7 @@ from timetable_constraints import interval, TIME_RANGE, singing_day
 from monthly_learning import planning_allowed, fingerprint
 
 RUBRIC_VERSION = 1
-QUALITY_MODULE_VERSION = 2
+QUALITY_MODULE_VERSION = 3
 CATEGORIES = ('alignment', 'progression', 'timetable', 'lesson_quality', 'practicality', 'specificity', 'usability')
 STATES = ('Pass', 'Revise', 'Blocked', 'Unchecked')
 HARD_CODES = ('unsupported_content', 'invalid_scope', 'unfinished_contradiction', 'completed_repetition', 'broad_completion', 'held_scope', 'unavailable_resource', 'missing_essential')
@@ -92,10 +92,10 @@ def code_checks(plan, context):
         if any(start < e and end > s for s,e,_ in blocks):
             problems.append(issue('protected_overlap', 'Lesson overlaps a protected routine or external block.', n))
         if not any(s == start and e == end for s,e,_ in overview):
-            problems.append(issue('overview_mismatch', 'Lesson time must match its overview slot.', n))
+            problems.append(issue('overview_mismatch', f"Lesson {n + 1} time {lesson['time']} must match an identical overview slot; update both consistently.", n))
         phases = lesson.get('phases')
         if not isinstance(phases,list) or not phases or any(not isinstance(p,dict) or type(p.get('minutes')) is not int or p['minutes'] <= 0 or not isinstance(p.get('activity'),str) or not p['activity'].strip() for p in phases) or sum(p['minutes'] for p in phases) != end-start:
-            problems.append(issue('phase_duration', 'Structured phase minutes must sum exactly to the lesson slot, including setup/tidy-up.', n))
+            problems.append(issue('phase_duration', f"Lesson {n + 1} ({lesson['time']}) requires exactly {end-start} phase minutes including setup/tidy-up; supplied total: {sum(p.get('minutes',0) for p in phases if isinstance(p,dict) and type(p.get('minutes')) is int) if isinstance(phases,list) else 'missing'}.", n))
         for link in lesson.get('monthly_item_links', []):
             item = items.get(link.get('item_id'))
             if not item or not planning_allowed(item) or item['status'] == 'Completed' or (monthly and item['monthly_plan_id'] != monthly['id'] and item['id'] not in carry_items) or (monthly and item['monthly_plan_id'] == monthly['id'] and item['fingerprint'] != fingerprint(monthly['plan_text'])):
@@ -204,7 +204,7 @@ def quality_gate(plan, context, client, generation_format):
         if report['state'] != 'Pass':
             revisions=1
             response=client.responses.create(model='gpt-5.4-mini',text={'format':generation_format},
-                input='Repair this daily plan ONLY to resolve the listed material findings. Preserve correct teaching and protected routines. Use exact source-backed content; never alter learning outcomes. Return the whole corrected plan. Each lesson needs phases [{minutes: positive integer, activity: concise description}]; phase totals equal clock duration, including setup and tidy-up. Do not duplicate phases in details. '+REVIEW_RULES+'\nEVIDENCE:\n'+json.dumps(review_context(context),ensure_ascii=False)+'\nFINDINGS:\n'+json.dumps(report['findings'],ensure_ascii=False)+'\nCANDIDATE:\n'+json.dumps(plan,ensure_ascii=False))
+                input='Repair this daily plan ONLY to resolve the listed material findings. Preserve correct teaching and protected routines. Use exact source-backed content; never alter learning outcomes. Return the whole corrected plan. Each lesson needs phases [{minutes: positive integer, activity: concise description}]; phase totals equal clock duration, including setup and tidy-up. Do not duplicate phases in details. '+REVIEW_RULES+'\nTIMING CHECK: Keep each lesson time identical to its overview row. First compute end minus start; then allocate positive whole phase minutes summing to that exact number. Do not lengthen a lesson into protected blocks to fit activities.\nEVIDENCE:\n'+json.dumps(review_context(context),ensure_ascii=False)+'\nFINDINGS:\n'+json.dumps(report['findings'],ensure_ascii=False)+'\nCANDIDATE:\n'+json.dumps(plan,ensure_ascii=False))
             plan=parse_generated_plan(response.output_text,context['planning_date'])
             plan['monthly_plan']={k:context['monthly_plan'][k] for k in ('id','title','start_date','end_date')}
             report,used=evaluate_candidate(plan,context,client)
