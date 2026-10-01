@@ -40,6 +40,9 @@ import planning_quality
 if getattr(planning_quality, "QUALITY_MODULE_VERSION", None) != 18:
     importlib.reload(planning_quality)
 from planning_quality import quality_gate, QualityFailure, protected_blocks
+import lesson_resources_ui
+if getattr(lesson_resources_ui, 'MODULE_VERSION', None) != 2:
+    importlib.reload(lesson_resources_ui)
 import json
 from datetime import date, timedelta
 from lesson_progress import (
