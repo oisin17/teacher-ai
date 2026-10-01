@@ -21,6 +21,14 @@ def review(findings=None, decisions=None):
 
 
 class QualityTests(unittest.TestCase):
+    def test_single_time_routine_cannot_hide_an_overview_overlap(self):
+        c=context();p=candidate(c);p['overview']+='\n09:30 Morning Meeting'
+        self.assertIn('overview_time',{f['code'] for f in code_checks(p,c)})
+        p['overview']=p['overview'].replace('09:30 Morning Meeting','09:30–09:40 Morning Meeting')
+        self.assertIn('overview_overlap',{f['code'] for f in code_checks(p,c)})
+        p['overview']=p['overview'].replace('09:30–09:40 Morning Meeting','09:20–09:30 Morning Meeting')
+        self.assertEqual(code_checks(p,c),[])
+
     def test_protected_sport_is_overview_only_and_visible_to_semantic_review(self):
         c=context('2026-10-02');c['teacher_profile']['recurring_arrangements']='Friday, 11:15–11:45 – Sport'
         p=candidate(c);p['lessons'][1]['time']='11:45–12:25'

@@ -37,7 +37,7 @@ if refresh_lessons or getattr(persistence, "PERSISTENCE_VERSION", None) != 11:
     importlib.reload(persistence)
 from persistence import Store, StorageError
 import planning_quality
-if getattr(planning_quality, "QUALITY_MODULE_VERSION", None) != 17:
+if getattr(planning_quality, "QUALITY_MODULE_VERSION", None) != 18:
     importlib.reload(planning_quality)
 from planning_quality import quality_gate, QualityFailure, protected_blocks
 import json
@@ -492,7 +492,7 @@ if page == "Today":
 
                             f"PROTECTED BLOCKS FOR THIS SELECTED DATE — use these EXACT clock ranges in the overview; all lessons fit between them: {protected_times}\n\n"
                             f"REQUIRED TEACHING ARRANGEMENTS FOR THIS DATE — these require real lesson content in the lessons array, unlike protected overview-only blocks: {planning_quality.teaching_requirements(quality_context)}\n\n"
-                            "Also preserve all other recorded daily routines. If Morning Meeting is recorded around 09:20 without an end time, include a practical short Morning Meeting there in the overview before teaching begins; do not omit it or invent a fixed duration as teacher evidence.\n"
+                            "Also preserve all other recorded daily routines. If Morning Meeting is recorded around 09:20 without an end time, choose a practical short PLANNED start/end interval there in the overview before teaching begins. This is a planning allocation, not a claim that the teacher confirmed a fixed duration. EVERY overview activity must have start and end times; never list only 09:20 or let a lesson overlap the chosen Meeting interval.\n"
                             "IMPORTANT RULES:\n"
                             + ("- PROTECTED THURSDAY: external teacher Singing 14:00–14:30 is fixed, overrides uploaded timetable/monthly coverage, and must appear in the overview only. Do not derive Singing content from the Monthly Plan or add it to lesson progress. Finish ALL normal teaching by 14:00. Schedule pack-up/tidy-up 13:50–14:00 before Singing; school finishes at 14:30, with no second pack-up slot.\n" if singing_day(teacher_profile, planning_date.isoformat()) else "")
                             +

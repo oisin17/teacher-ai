@@ -9,7 +9,7 @@ from timetable_constraints import interval, TIME_RANGE, singing_day
 from monthly_learning import planning_allowed, fingerprint
 
 RUBRIC_VERSION = 1
-QUALITY_MODULE_VERSION = 17
+QUALITY_MODULE_VERSION = 18
 CATEGORIES = ('alignment', 'progression', 'timetable', 'lesson_quality', 'practicality', 'specificity', 'usability')
 STATES = ('Pass', 'Revise', 'Blocked', 'Unchecked')
 HARD_CODES = ('unsupported_content', 'invalid_scope', 'unfinished_contradiction', 'completed_repetition', 'broad_completion', 'held_scope', 'unavailable_resource', 'missing_essential')
@@ -66,11 +66,14 @@ def code_checks(plan, context):
     blocks = protected_blocks(context)
     overview = []
     for line in plan.get('overview', '').splitlines():
-        if TIME_RANGE.search(line.replace('*','').replace('`','')):
+        clean=line.replace('*','').replace('`','')
+        if TIME_RANGE.search(clean):
             try:
                 overview.append((*interval(line), line))
             except ValueError:
                 problems.append(issue('overview_time', 'Invalid overview time interval.'))
+        elif re.search(r'\b\d{1,2}:[0-5]\d\b',clean):
+            problems.append(issue('overview_time', 'Every timed overview activity needs an explicit start AND end, including a chosen planned duration for approximate routines; a single clock time cannot reserve space.', evidence=line))
     for start, end, name in blocks:
         aliases = {'Pack Up': r'pack|tidy', 'Morning work': r'work it out|morning work', 'Sport':r'sport', 'DEAR':r'\bdear\b|drop everything'}.get(name, name)
         if not any(s == start and e == end and re.search(aliases, line, re.I) for s,e,line in overview):
