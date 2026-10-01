@@ -21,6 +21,21 @@ def review(findings=None, decisions=None):
 
 
 class QualityTests(unittest.TestCase):
+    def test_protected_sport_is_overview_only_and_visible_to_semantic_review(self):
+        c=context('2026-10-02');c['teacher_profile']['recurring_arrangements']='Friday, 11:15–11:45 – Sport'
+        p=candidate(c);p['lessons'][1]['time']='11:45–12:25'
+        p['overview']=p['overview'].replace('11:15–11:55','11:45–12:25')+'\n11:15–11:45 Sport'
+        self.assertEqual(code_checks(p,c),[])
+        client=Mock()
+        def respond(**kwargs):
+            packet=json.loads(kwargs['input'].split('SOURCE-REFERENCED PACKET:')[1].split('\n',1)[1])
+            self.assertEqual(packet['context']['protected_blocks'][0]['name']['text'],'Sport')
+            self.assertEqual(packet['context']['protected_blocks'][0]['time']['text'],'11:15–11:45')
+            return review()
+        client.responses.create.side_effect=respond
+        self.assertEqual(quality_gate(p,c,client,{})['planning_quality']['state'],'Pass')
+        self.assertFalse(any(l['subject']=='Sport' for l in p['lessons']))
+
     def test_overview_cannot_schedule_a_teaching_slot_without_a_lesson(self):
         c=context(); p=candidate(c)
         p['overview'] += '\n10:00–10:30 English — procedural reading'
