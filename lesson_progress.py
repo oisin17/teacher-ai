@@ -19,8 +19,9 @@ PLAN_FORMAT = {
             "overview": {"type": "string"},
             "lessons": {"type": "array", "items": {
                 "type": "object", "additionalProperties": False,
-                "properties": {**{key: {"type": "string"} for key in LESSON_FIELDS if key != "lesson_id"}, "carryover_ids": {"type": "array", "items": {"type": "string"}}},
-                "required": [key for key in LESSON_FIELDS if key != "lesson_id"] + ["carryover_ids"],
+                "properties": {**{key: {"type": "string"} for key in LESSON_FIELDS if key != "lesson_id"}, "carryover_ids": {"type": "array", "items": {"type": "string"}},
+                "monthly_item_links": {"type": "array", "items": {"type": "object", "additionalProperties": False, "properties": {"item_id": {"type": "string"}, "coverage": {"type": "string"}}, "required": ["item_id", "coverage"]}}},
+                "required": [key for key in LESSON_FIELDS if key != "lesson_id"] + ["carryover_ids", "monthly_item_links"],
             }},
         }, "required": ["overview", "lessons"],
     },
@@ -50,6 +51,9 @@ def validate_lessons(lessons, progress=False):
             values = lesson.get(key, [])
             if not isinstance(values, list) or any(not isinstance(v, str) or not v for v in values) or len(set(values)) != len(values):
                 raise ValueError("Invalid carryover links")
+        links = lesson.get('monthly_item_links', [])
+        if not isinstance(links, list) or any(not isinstance(link, dict) or not isinstance(link.get('item_id'), str) or not isinstance(link.get('coverage'), str) or not link['coverage'].strip() for link in links) or len({link['item_id'] for link in links}) != len(links):
+            raise ValueError('Invalid Monthly Plan learning links')
         if progress:
             if any(id not in lesson.get("carryover_ids", []) for id in lesson.get("completed_carryover_ids", [])):
                 raise ValueError("Unlinked carryover completion")
