@@ -4,6 +4,10 @@ import io
 import hashlib
 from uuid import uuid4
 from monthly_plans import suggest_dates
+import importlib
+import monthly_learning_ui
+if getattr(monthly_learning_ui, "MODULE_VERSION", None) != 2:
+    importlib.reload(monthly_learning_ui)
 from monthly_learning_ui import review_items, item_inputs, suggest_outcomes
 from monthly_learning import MARKER, fingerprint
 import importlib

@@ -1,4 +1,5 @@
 """Optional item review and exception-only daily outcomes."""
+MODULE_VERSION = 2
 import json
 from uuid import uuid4
 import streamlit as st
