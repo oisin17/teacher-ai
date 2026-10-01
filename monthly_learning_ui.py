@@ -1,5 +1,5 @@
 """Optional item review and exception-only daily outcomes."""
-MODULE_VERSION = 4
+MODULE_VERSION = 5
 import json
 from uuid import uuid4
 import streamlit as st
@@ -141,26 +141,39 @@ def item_inputs(lesson, prefix, items):
 
 
 def suggest_outcomes(client, lessons, items):
-    linked = {link['item_id'] for lesson in lessons for link in lesson.get('monthly_item_links', [])}
-    source = [i for i in items.values() if i['id'] in linked]
-    response = client.responses.create(model='gpt-5.4-mini', input=(
-        'Suggest Monthly Plan item outcomes from teacher lesson notes. Notes are authoritative. '
-        'Return JSON only {"updates":[{"lesson_id":"...","item_id":"...","status":"In progress", "remaining":"exact unfinished aspect", "evidence":"exact teacher note quotation"}]}. '
-        'Only use the exact linked IDs. Completed requires clear note evidence that the ENTIRE discrete item is finished; '
-        'broad/recurring objectives remain In progress unless teacher explicitly says the whole objective is finished. '
-        'Partial lessons can complete some items if explicitly supported but retain the exact unfinished aspect for others. '
-        'Not taught adds no outcome. Do not invent stopping points, downgrade existing completed work, or infer completion from lesson status alone. '
-        'When ambiguous, suggest In progress with uncertainty. These are suggestions for teacher acceptance only.\n'
-        f'ITEMS: {source}\nLESSONS: {lessons}'))
+    noted = [lesson for lesson in lessons if lesson['note'].strip() and lesson['status'] != 'Not taught']
+    linked = {link['item_id'] for lesson in noted for link in lesson.get('monthly_item_links', [])}
+    source = [{'item_id': i['id'], **{k: i[k] for k in ('subject', 'description', 'type', 'status', 'remaining')}} for i in items.values() if i['id'] in linked]
+    snapshots = [{k: lesson.get(k, []) for k in ('lesson_id', 'subject', 'learning_intention', 'status', 'note', 'monthly_item_links')} for lesson in noted]
+    fields = {'lesson_id': {'type': 'string'}, 'item_id': {'type': 'string'},
+        'status': {'type': 'string', 'enum': list(STATUSES)}, 'remaining': {'type': 'string'}}
+    schema = {'type': 'json_schema', 'name': 'monthly_item_outcome_suggestions', 'strict': True,
+        'schema': {'type': 'object', 'additionalProperties': False,
+            'properties': {'updates': {'type': 'array', 'items': {'type': 'object', 'additionalProperties': False,
+                'properties': fields, 'required': list(fields)}}}, 'required': ['updates']}}
+    response = client.responses.create(model='gpt-5.4-mini', text={'format': schema}, input=(
+        'Suggest Monthly Plan item outcomes ONLY from these teacher-noted lessons. Notes are authoritative. '
+        'Only use the exact linked item_id and lesson_id values provided. Completed requires clear note evidence '
+        'that the ENTIRE discrete item is finished; broad/recurring objectives remain In progress unless '
+        'teacher explicitly says the whole objective is finished. Partial lessons can complete some items '
+        'if explicitly supported; retain the specific unfinished aspect in remaining for other items. '
+        'For Completed set remaining to empty. Do not invent stopping points or infer completion from '
+        'lesson status alone. Ambiguous outcomes remain In progress with uncertainty. These are suggestions '
+        'for teacher acceptance ONLY, never automatic status updates.\n'
+        f'ITEMS: {source}\nNOTED LESSONS: {snapshots}'))
     proposals = json.loads(response.output_text)['updates']
     if not isinstance(proposals, list):
         raise ValueError('Invalid suggestions')
-    by_lesson = {l['lesson_id']: l for l in lessons}
+    by_lesson = {l['lesson_id']: l for l in noted}
     result = {}
+    seen = set()
     for u in proposals:
         lesson = by_lesson[u['lesson_id']]
-        if u['item_id'] not in {l['item_id'] for l in lesson.get('monthly_item_links', [])} or u['status'] not in STATUSES or not isinstance(u['remaining'], str) or not u['evidence'] or u['evidence'] not in lesson['note'] or lesson['status'] == 'Not taught':
+        if u['item_id'] not in {l['item_id'] for l in lesson.get('monthly_item_links', [])} or u['status'] not in STATUSES or not isinstance(u['remaining'], str) or (u['lesson_id'], u['item_id']) in seen:
             raise ValueError('Unsupported suggestion')
+        seen.add((u['lesson_id'], u['item_id']))
+        # The original teacher note is copied by the app, never re-quoted by AI.
+        u['evidence'] = lesson['note']
         u['confirmed_complete'] = False
         result.setdefault(u['lesson_id'], []).append(u)
     return result

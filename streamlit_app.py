@@ -9,7 +9,7 @@ import monthly_learning
 if getattr(monthly_learning, "LEARNING_VERSION", None) != 2:
     importlib.reload(monthly_learning)
 import monthly_learning_ui
-if getattr(monthly_learning_ui, "MODULE_VERSION", None) != 4:
+if getattr(monthly_learning_ui, "MODULE_VERSION", None) != 5:
     importlib.reload(monthly_learning_ui)
 from monthly_learning_ui import review_items, item_inputs, suggest_outcomes
 from monthly_learning import MARKER, fingerprint
