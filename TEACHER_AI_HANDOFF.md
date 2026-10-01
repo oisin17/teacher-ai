@@ -845,3 +845,58 @@ suite and real PostgreSQL 16 storage/concurrency tests. Backup/restore and compl
 progress → item state → Current Learning → next-generation inputs are verified
 with isolated automated data. A genuine classroom progress save remains owner
 acceptance work; it was not simulated in production.
+
+
+## 24. Approved October regrouping — applied 1 October 2026
+
+Code commit: 953b56d1955e486e99524373ab2d0806f460162e.
+The owner approved October_2026_Item_Regrouping_Review.md, including E14 held
+for teacher clarification and immutable source quotations with separately confirmed
+display corrections. The deployed reviewed-file importer applies an atomic,
+revision/status/event/carryover-checked update under the existing database lock.
+
+The fresh format-5 backup was checked before application. All October items were
+Not started and no item outcome events existed. Production now retains all 154
+old October IDs and adds 49 replacement scopes, with 106 active reviewed items:
+English 27, Gaeilge 24, Science 5, Visual Arts 6; History 9, Geography 8, Maths 9,
+Music 6, Drama 3, PE 4, SPHE 3, Religion 1, Other 1. Replacements use
+replacement_from provenance, not outcome inheritance. Archived historical IDs
+and October 1 lesson snapshots remain intact and usable for progress recording.
+
+E14 ID 44e32344ff1c46d597729e54d3ec045d has requires_clarification=true.
+Generation excludes it and explicitly instructs the model not to prioritise the
+ambiguous recount wording from the original document. The review editor can clear
+the flag after teacher clarification. Display corrections require an explicit
+confirmation and never edit source/sources. Original source evidence is immutable.
+Extraction instructions now favour independently teachable/assessable scopes, not
+individual games, worksheet steps, repetition or delivery methods.
+
+A bookkeeping error in the review's History appendix swapped the archived summary
+and active Famine project. This was disclosed to the owner before application:
+7e026f39085640f7817c75497c1f1832 remains archived; the active project
+abe9d1d29b784e4b9f585efb97fe2f1c remains active as H08. The approved English,
+Gaeilge, Science and Art mappings were unaffected.
+
+Carryover references are reconciled: one-to-one outstanding references follow the
+replacement; split/removed/completed references retain prior evidence/state as
+free text pending explicit teacher scope selection; duplicate shared priorities
+are removed recoverably. The owner's two existing free-text carryover entries
+required no changes.
+
+The post-application export matched the fresh backup exactly for every other
+saved area, including Current Learning, Actual Progress, Monthly Plans, carryover,
+period reviews, item outcome events and day plans. September item metadata was
+unchanged. All original item source quotations and historical IDs were preserved.
+No fictional teaching outcomes were saved.
+
+75 local unittest tests pass. GitHub Actions run 36862135753 succeeded, including
+real PostgreSQL persistence/migration/concurrency checks. New tests cover stale
+revisions/progress, immutable sources, historical links, no completion transfer,
+carryover reconciliation, held items and display corrections.
+
+Live browser generation for Friday 2 October used the regrouped scopes and saved
+a new day plan without replacing October 1. Examples: Art Angle City links A03
+28af726eb3d643fb9c94dd59e6a5511a; procedural text features links E11
+25b49c7eb8a84eaca3909d7642b37f78; paired food conversations links G02
+fb095e38b66d41e9b0f991bc1f531985. Friday Sport remains 11:15–11:45 and
+pack-up 14:20–14:30. No progress-save action was performed in this live check.
