@@ -484,6 +484,8 @@ if page == "Today":
                             "Carryover is a short-term priority alongside the new month's main coverage. Schedule into appropriate lessons over the next days; do not cram everything into day one. "
                             "For a lesson addressing carryover, include its exact ID in carryover_ids. Use [] for other lessons. Do not link unrelated learning or already completed/removed items. "
                             "A carryover lesson must state the specific unfinished learning it addresses. Teacher completion of carryover overrides stale older evidence for that item.\n"
+                            "Do not label an unknown previous lesson as the new month's topic. If the prior task/topic is unspecified, explicitly include a brief teacher/pupil recall check to identify it, then resume the actual missed/unfinished task. "
+                            "Link carryover only when the lesson phases explicitly identify and address that prior task; sharing a subject is insufficient.\n"
                             f"ALL REVIEWED CARRYOVER DECISIONS:\n{carry_context['items']}\n\n"
                             f"YEARLY PLAN:\n{yearly_plan_text}\n\n"
                             f"CURRENT LEARNING POSITION (teacher-confirmed current classroom position):\n{current_learning_position}\n\n"
