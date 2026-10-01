@@ -57,7 +57,7 @@ class StoreTests(unittest.TestCase):
                 raise RuntimeError("Integration tests only accept a local test_teacher_ai database")
             self.real_connect = psycopg.connect
             with self.real_connect(self.url) as connection:
-                for table in ["monthly_plans", "lesson_progress", "day_plans", *DOCUMENTS, "actual_progress", "storage_migrations"]:
+                for table in ["period_reviews", "carryover_items", "monthly_plans", "lesson_progress", "day_plans", *DOCUMENTS, "actual_progress", "storage_migrations"]:
                     connection.execute(f"DROP TABLE IF EXISTS {table}")
             def connect(url, **kwargs):
                 # The isolated CI localhost service has no TLS; production
@@ -76,6 +76,62 @@ class StoreTests(unittest.TestCase):
     def tearDown(self):
         self.patcher.stop()
         self.temp.cleanup()
+
+    def carry_setup(self):
+        self.store.save_monthly_plan(self.monthly(), True)
+        monthly = self.monthly("oct", "2026-10-01", "2026-10-31")
+        self.store.save_monthly_plan(monthly, True)
+        item = {"id": "carry-english", "period_id": "oct", "subject": "English", "learning": "Finish final activity", "evidence": "30 September partial", "created_date": "2026-10-01", "state": "outstanding"}
+        self.store.save_period_review(monthly, "2026-10-01", [item], True)
+        return monthly, item
+
+    def test_carryover_review_is_durable_once_and_nothing_is_explicit(self):
+        monthly, item = self.carry_setup()
+        context = self.store.carryover_context(monthly, "2026-10-01")
+        self.assertEqual(context["previous"]["id"], "sep")
+        self.assertFalse(context["review"]["nothing_selected"])
+        with self.assertRaises(StorageError):
+            self.store.save_period_review(monthly, "2026-10-01", [], True)
+        self.assertEqual(len(self.store.list_carryover()), 1)
+        self.assertEqual(self.store.list_carryover("2026-09-30"), [])
+
+    def test_carryover_link_completion_partial_correction_and_manual_removal(self):
+        monthly, item = self.carry_setup()
+        plan = sample_plan("2026-10-01")
+        plan["lessons"][1]["carryover_ids"] = [item["id"]]
+        self.store.save_day_plan(plan)
+        recorded = outcomes(plan)
+        recorded[1]["completed_carryover_ids"] = []
+        self.store.save_lesson_progress(plan["planning_date"], plan["plan_id"], recorded)
+        self.assertEqual(self.store.list_carryover()[0]["state"], "outstanding")
+        recorded[1].update(status="Completed", completed_carryover_ids=[item["id"]])
+        self.store.save_lesson_progress(plan["planning_date"], plan["plan_id"], recorded)
+        self.assertEqual(self.store.list_carryover()[0]["state"], "completed")
+        row = self.store.load_progress_history()[0]
+        recorded[1].update(status="Not taught", completed_carryover_ids=[])
+        self.store.correct_lesson_progress(row["id"], "2026-10-01", recorded)
+        self.assertEqual(self.store.list_carryover()[0]["state"], "outstanding")
+        self.store.set_carryover_state(item["id"], "completed")
+        self.assertEqual(self.store.list_carryover()[0]["state"], "completed")
+        self.store.set_carryover_state(item["id"], "removed")
+        self.assertEqual(self.store.list_carryover()[0]["state"], "removed")
+        self.store.set_carryover_state(item["id"], "outstanding")
+        self.assertEqual(self.store.list_carryover()[0]["state"], "outstanding")
+
+    def test_carryover_cannot_close_from_partial_or_forged_link(self):
+        monthly, item = self.carry_setup()
+        plan = sample_plan("2026-10-01")
+        plan["lessons"][1]["carryover_ids"] = [item["id"]]
+        self.store.save_day_plan(plan)
+        recorded = outcomes(plan)
+        recorded[1]["completed_carryover_ids"] = [item["id"]]
+        with self.assertRaises(StorageError):
+            self.store.save_lesson_progress(plan["planning_date"], plan["plan_id"], recorded)
+        self.assertEqual(self.store.load_progress_history(), [])
+        forged = sample_plan("2026-10-02")
+        forged["lessons"][0]["carryover_ids"] = ["invented"]
+        with self.assertRaises(StorageError):
+            self.store.save_day_plan(forged)
 
     def monthly(self, id="sep", start="2026-09-01", end="2026-09-30"):
         return {"id": id, "title": id, "source_filename": "October 2030.docx",
@@ -388,7 +444,7 @@ class StoreTests(unittest.TestCase):
     def test_new_backup_roundtrip_preserves_plans_and_lesson_snapshots(self):
         plan, position = self.save_sample()
         backup = self.store.export_backup()
-        self.assertEqual(backup["format_version"], 3)
+        self.assertEqual(backup["format_version"], 4)
         with self.connect(self.url) as connection:
             for table in ["lesson_progress", "day_plans", "actual_progress", *DOCUMENTS]:
                 connection.execute(f"DELETE FROM {table}")
