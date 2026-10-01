@@ -1,5 +1,6 @@
 """Run locally with a SQLite SQL adapter; CI also runs against real PostgreSQL."""
 import json
+from datetime import date
 import os
 import sqlite3
 import tempfile
@@ -57,7 +58,7 @@ class StoreTests(unittest.TestCase):
                 raise RuntimeError("Integration tests only accept a local test_teacher_ai database")
             self.real_connect = psycopg.connect
             with self.real_connect(self.url) as connection:
-                for table in ["period_reviews", "carryover_items", "monthly_plans", "lesson_progress", "day_plans", *DOCUMENTS, "actual_progress", "storage_migrations"]:
+                for table in ["monthly_item_updates", "monthly_learning_items", "period_reviews", "carryover_items", "monthly_plans", "lesson_progress", "day_plans", *DOCUMENTS, "actual_progress", "storage_migrations"]:
                     connection.execute(f"DROP TABLE IF EXISTS {table}")
             def connect(url, **kwargs):
                 # The isolated CI localhost service has no TLS; production
@@ -473,7 +474,7 @@ class StoreTests(unittest.TestCase):
     def test_new_backup_roundtrip_preserves_plans_and_lesson_snapshots(self):
         plan, position = self.save_sample()
         backup = self.store.export_backup()
-        self.assertEqual(backup["format_version"], 4)
+        self.assertEqual(backup["format_version"], 5)
         with self.connect(self.url) as connection:
             for table in ["lesson_progress", "day_plans", "actual_progress", *DOCUMENTS]:
                 connection.execute(f"DELETE FROM {table}")
@@ -521,6 +522,162 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(self.store.load_day("2026-09-30")["progress"]["notes"], "Original teacher note")
         self.assertIsNone(self.store.load_day("2026-09-30")["plan"])
 
+
+    def learning_setup(self):
+        from monthly_learning import fingerprint
+        monthly = self.monthly()
+        self.store.save_monthly_plan(monthly, True)
+        items = [dict(id=f'item-{n}', monthly_plan_id=monthly['id'], subject='History', description=f'History aspect {n}', source=monthly['plan_text'], fingerprint=fingerprint(monthly['plan_text']), type=kind, archived=False) for n, kind in enumerate(['discrete', 'discrete', 'discrete', 'broad'])]
+        self.store.save_learning_items(monthly, items)
+        plan = sample_plan()
+        plan['monthly_plan'] = {k: monthly[k] for k in ('id', 'title', 'start_date', 'end_date')}
+        plan['lessons'][1]['monthly_item_links'] = [dict(item_id=i['id'], coverage=i['description']) for i in items]
+        self.store.save_day_plan(plan)
+        return monthly, items, plan
+
+    def test_item_mixed_partial_exact_remainder_and_correction(self):
+        monthly, items, plan = self.learning_setup()
+        recorded = outcomes(plan)
+        recorded[1]['item_updates'] = [dict(item_id=i['id'], status='Completed' if n < 3 else 'In progress', remaining='' if n < 3 else 'final immigrant-letter activity', evidence='teacher accepted item evidence', confirmed_complete=n < 3) for n, i in enumerate(items)]
+        self.store.save_lesson_progress(plan['planning_date'], plan['plan_id'], recorded)
+        current = {i['id']: i for i in self.store.list_learning_items()}
+        self.assertEqual(sum(i['status'] == 'Completed' for i in current.values()), 3)
+        self.assertEqual(current['item-3']['remaining'], 'final immigrant-letter activity')
+        self.assertIn('final immigrant-letter activity', self.store.load_document('current_learning_position')['SESE'])
+        recorded[1].update(status='Not taught', item_updates=[])
+        self.store.correct_lesson_progress(self.store.load_progress_history()[0]['id'], '2026-09-30', recorded)
+        self.assertTrue(all(i['status'] == 'Not started' for i in self.store.list_learning_items()))
+
+    def test_completed_lesson_never_finishes_broad_or_discrete_item(self):
+        monthly, items, plan = self.learning_setup()
+        recorded = outcomes(plan)
+        recorded[1].update(status='Completed', note='')
+        self.store.save_lesson_progress(plan['planning_date'], plan['plan_id'], recorded)
+        self.assertTrue(all(i['status'] == 'In progress' for i in self.store.list_learning_items()))
+
+    def test_unconfirmed_completion_rolls_back_day_and_learning(self):
+        monthly, items, plan = self.learning_setup()
+        recorded = outcomes(plan)
+        recorded[1]['item_updates'] = [dict(item_id='item-0', status='Completed', remaining='', evidence='AI suggestion', confirmed_complete=False)]
+        before = self.store.export_backup()
+        with self.assertRaises(StorageError):
+            self.store.save_lesson_progress(plan['planning_date'], plan['plan_id'], recorded)
+        self.assertEqual(before, self.store.export_backup())
+
+    def test_manual_item_correction_preserved_until_new_evidence(self):
+        monthly, items, plan = self.learning_setup()
+        self.store.correct_learning_item('item-0', 'Completed', '', 'resolved separately', True)
+        self.store.save_lesson_progress(plan['planning_date'], plan['plan_id'], outcomes(plan))
+        self.assertEqual(next(i for i in self.store.list_learning_items() if i['id'] == 'item-0')['status'], 'Completed')
+        self.store.correct_learning_item('item-0', 'In progress', 'last letter still unfinished', 'correction', False)
+        self.assertEqual(next(i for i in self.store.list_learning_items() if i['id'] == 'item-0')['remaining'], 'last letter still unfinished')
+
+    def test_learning_ids_edit_archive_restore_and_stale_edit_guard(self):
+        monthly, items, plan = self.learning_setup()
+        current = self.store.list_learning_items()
+        current[0]['description'] = 'Corrected wording'
+        self.store.save_learning_items(monthly, current)
+        with self.assertRaises(StorageError):
+            self.store.save_learning_items(monthly, current)
+        newer = self.store.list_learning_items()
+        newer[0]['archived'] = True
+        self.store.save_learning_items(monthly, newer)
+        self.assertTrue(self.store.list_learning_items()[0]['archived'])
+        newer = self.store.list_learning_items()
+        newer[0]['archived'] = False
+        self.store.save_learning_items(monthly, newer)
+        self.assertEqual(self.store.load_day('2026-09-30')['plan']['lessons'][1]['monthly_item_links'][0]['item_id'], 'item-0')
+
+    def test_item_link_validation_no_unknown_or_completed(self):
+        monthly, items, plan = self.learning_setup()
+        plan['lessons'][1]['monthly_item_links'][0]['item_id'] = 'invented'
+        with self.assertRaises(StorageError):
+            self.store.save_day_plan(plan)
+        plan['lessons'][1]['monthly_item_links'][0]['item_id'] = 'item-0'
+        self.store.correct_learning_item('item-0', 'Completed', '', 'whole item confirmed', True)
+        plan['planning_date'] = date.today().isoformat()
+        with self.assertRaises(StorageError):
+            self.store.save_day_plan(plan)
+
+    def test_shared_carryover_status_completion_remove_and_duplicate_guard(self):
+        monthly, items, plan = self.learning_setup()
+        next_month = self.monthly('oct', '2026-10-01', '2026-10-31')
+        self.store.save_monthly_plan(next_month, True)
+        carry = dict(id='shared', period_id='oct', subject='History', learning='History aspect 0', evidence='unfinished', created_date='2026-10-01', state='outstanding', monthly_item_id='item-0')
+        self.store.save_period_review(next_month, '2026-10-01', [carry], True)
+        self.store.set_carryover_state('shared', 'removed')
+        self.assertEqual(self.store.list_learning_items()[0]['status'], 'Not started')
+        self.store.set_carryover_state('shared', 'completed')
+        self.assertEqual(self.store.list_learning_items()[0]['status'], 'Completed')
+        self.store.correct_learning_item('item-0', 'In progress', 'unfinished final step', 'teacher correction', False)
+        self.assertEqual(self.store.list_carryover()[0]['state'], 'outstanding')
+        self.assertEqual(self.store.list_carryover()[0]['learning'], 'unfinished final step')
+
+    def test_item_backup_roundtrip_and_invalid_reference_atomic(self):
+        monthly, items, plan = self.learning_setup()
+        self.store.save_lesson_progress(plan['planning_date'], plan['plan_id'], outcomes(plan))
+        backup = self.store.export_backup()
+        with self.store._connection() as connection:
+            for table in ['monthly_item_updates', 'monthly_learning_items', 'period_reviews', 'carryover_items', 'lesson_progress', 'day_plans', *DOCUMENTS, 'actual_progress', 'monthly_plans']:
+                connection.execute(f'DELETE FROM {table}')
+        bad = json.loads(json.dumps(backup))
+        bad['monthly_item_updates'][0]['item_id'] = 'unknown'
+        with self.assertRaises(StorageError):
+            self.store.restore_backup(bad)
+        self.assertTrue(self.store.restore_backup(backup))
+        self.assertEqual(self.store.list_learning_items()[0]['status'], 'In progress')
+        row = self.store.load_progress_history()[0]
+        recorded = row['lessons']
+        recorded[1].update(status='Not taught')
+        self.store.correct_lesson_progress(row['id'], row['planning_date'], recorded)
+        self.assertTrue(all(i['status'] == 'Not started' for i in self.store.list_learning_items()))
+
+
+    def test_shared_item_lesson_carryover_completion_and_correction(self):
+        monthly, items, plan = self.learning_setup()
+        october = self.monthly('oct', '2026-10-01', '2026-10-31')
+        self.store.save_monthly_plan(october, True)
+        carry = dict(id='shared', monthly_item_id='item-0', period_id='oct', subject='History', learning='History aspect 0', evidence='teacher carryover', created_date='2026-10-01', state='outstanding')
+        self.store.save_period_review(october, '2026-10-01', [carry], True)
+        plan = sample_plan('2026-10-01')
+        plan['monthly_plan'] = {k: october[k] for k in ('id', 'title', 'start_date', 'end_date')}
+        plan['lessons'][1]['carryover_ids'] = ['shared']
+        plan['lessons'][1]['monthly_item_links'] = [dict(item_id='item-0', coverage='complete outstanding activity')]
+        self.store.save_day_plan(plan)
+        recorded = outcomes(plan)
+        self.store.save_lesson_progress('2026-10-01', plan['plan_id'], recorded)
+        self.assertEqual(self.store.list_carryover()[0]['state'], 'outstanding')
+        recorded[1].update(status='Completed', completed_carryover_ids=['shared'])
+        self.store.save_lesson_progress('2026-10-01', plan['plan_id'], recorded)
+        self.assertEqual(self.store.list_learning_items()[0]['status'], 'Completed')
+        self.assertEqual(self.store.list_carryover()[0]['state'], 'completed')
+        recorded[1].update(status='Not taught', completed_carryover_ids=[])
+        self.store.correct_lesson_progress(self.store.load_progress_history()[0]['id'], '2026-10-01', recorded)
+        self.assertEqual(self.store.list_carryover()[0]['state'], 'outstanding')
+        self.assertEqual(self.store.list_learning_items()[0]['status'], 'Not started')
+
+    def test_unverified_extraction_cannot_replace_items(self):
+        monthly, items, plan = self.learning_setup()
+        before = self.store.export_backup()
+        current = self.store.list_learning_items()
+        current[0]['source'] = 'invented document quotation'
+        with self.assertRaises(StorageError):
+            self.store.save_learning_items(monthly, current)
+        self.assertEqual(before, self.store.export_backup())
+
+    def test_merge_retains_remaining_evidence_and_historical_ids(self):
+        monthly, items, plan = self.learning_setup()
+        self.store.correct_learning_item('item-0', 'Completed', '', 'aspect zero finished', True)
+        self.store.correct_learning_item('item-1', 'In progress', 'only final letter unfinished', 'teacher evidence', False)
+        edited = self.store.list_learning_items()
+        for item in edited[:2]:
+            item['archived'] = True
+        merged = {**items[0], 'id': 'merged', 'description': 'Merged objective', 'merged_from': ['item-0', 'item-1']}
+        self.store.save_learning_items(monthly, edited + [merged])
+        current = next(i for i in self.store.list_learning_items() if i['id'] == 'merged')
+        self.assertEqual(current['remaining'], 'only final letter unfinished')
+        self.assertEqual(current['status'], 'In progress')
+        self.assertEqual(self.store.load_day('2026-09-30')['plan']['lessons'][1]['monthly_item_links'][0]['item_id'], 'item-0')
 
 if __name__ == "__main__":
     unittest.main()

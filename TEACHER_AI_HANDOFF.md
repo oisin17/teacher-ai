@@ -752,3 +752,45 @@ an appended Thursday exception while retaining existing daily/Sport/Art text.
 The live October 1 plan was regenerated and validated: literacy/writing ends
 at 13:50, pack-up is 13:50–14:00, Singing is 14:00–14:30, with no Singing
 curriculum lesson/progress row and no fictional teaching outcomes saved.
+
+## 23. Item-level Monthly Plan progress — 2026-10-01
+
+The owner approved stable item records, exact lesson links and teacher-accepted
+outcomes. Additive `monthly_learning_items` and `monthly_item_updates` tables
+retain original monthly text and historical lesson references. Items have UUIDs,
+subject, description, quoted document source, fingerprint, discrete/recurring/broad
+type, revision and recoverable archived state. PostgreSQL write locks and item
+revisions protect edits; a changed document requires reviewing replacement items.
+
+Planning Setup offers explicit AI extraction, editable suggestions, split, merge,
+archive/restore, subject progress totals and manual outcome/remaining-work corrections.
+Extraction is not past-progress inference. Split/merged replacements get new IDs;
+original items remain archived for historical references. Merges preserve prior
+unfinished evidence and migrate shared carryover references without duplicate priorities.
+
+Generated lessons use exact `monthly_item_links` IDs plus addressed scope. Unknown,
+archived, completed or unrelated-period IDs are rejected before saving. Existing
+saved plans without these links remain usable and are not retrospectively mapped.
+Generation receives exact item states/remaining learning alongside existing context.
+
+Daily progress retains bulk completion and optional notes. Only linked items appear
+in collapsed exception controls. Completed lessons alone set In progress, never
+whole-item completion (including discrete items). Whole-item completion requires
+an explicit checkbox. Optional AI note mappings remain drafts, quote teacher notes,
+and are accepted only by Save; model failure leaves conservative/manual controls.
+Partial notes retain exact remaining learning; untaught work does not erase prior
+completion. Explicit mixed item outcomes can complete three items while leaving the
+fourth unfinished. Progress, item events and Current Learning commit atomically.
+Corrections replace that record's events, replay states, and remove stale evidence.
+
+Carryover may reference the same monthly item. Item completion closes its linked
+carryover; manual carryover completion/reopen updates the same underlying item.
+Removing carryover changes scheduling priority only. Existing free-text carryover
+is preserved and can be explicitly linked by the teacher. Transition reviews offer
+unfinished prior items for confirmation, never automatically carrying over all items.
+
+Backup format 5 includes item definitions and updates; formats 1–4 remain supported.
+Restore validates references, remaps restored progress IDs and refuses nonempty stores.
+No new infrastructure, credentials, authentication or paid service was added.
+
+Live acceptance and final test results will be appended after deployment verification.

@@ -30,7 +30,10 @@ DOCUMENTS = {
 LOCK_ID = 73190421
 
 
-class Store:
+from monthly_learning import LearningStore, validate_item as validate_learning_item, validate_update, MARKER
+
+
+class Store(LearningStore):
     def __init__(self, database_url):
         if not isinstance(database_url, str) or not database_url.strip():
             raise StorageError(
@@ -114,6 +117,8 @@ class Store:
             """)
             connection.execute("CREATE TABLE IF NOT EXISTS period_reviews (period_id TEXT PRIMARY KEY, review_data TEXT NOT NULL)")
             connection.execute("CREATE TABLE IF NOT EXISTS carryover_items (id TEXT PRIMARY KEY, item_data TEXT NOT NULL)")
+            connection.execute("CREATE TABLE IF NOT EXISTS monthly_learning_items (id TEXT PRIMARY KEY, item_data TEXT NOT NULL)")
+            connection.execute("CREATE TABLE IF NOT EXISTS monthly_item_updates (id TEXT PRIMARY KEY, update_data TEXT NOT NULL)")
             marker = connection.execute(
                 "SELECT name FROM storage_migrations WHERE name = %s",
                 ("legacy_sqlite_v1",),
@@ -196,7 +201,20 @@ class Store:
                 if lesson["status"] == "Completed":
                     for id in lesson.get("completed_carryover_ids", []):
                         finished[id] = row["planning_date"]
+        learning = {i['id']: i for i in Store._learning(connection, as_of)}
         for item in items:
+            if item.get('monthly_item_id'):
+                linked = learning.get(item['monthly_item_id'])
+                if linked:
+                    item['learning'] = (linked['remaining'] or linked['description'])[:300]
+                    item['subject'] = linked['subject']
+                    if linked['archived']:
+                        item['state'] = 'removed'
+                        item['completion_source'] = 'archived_item'
+                    elif item['state'] != 'removed':
+                        item['state'] = 'completed' if linked['status'] == 'Completed' else 'outstanding'
+                    item['completion_source'] = 'monthly_item'
+                continue
             if item["state"] == "outstanding" and item["id"] in finished:
                 item["state"] = "completed"
                 item["completed_date"] = finished[item["id"]]
@@ -218,6 +236,7 @@ class Store:
             position = before_date(json.loads(row_position[0]) if row_position else {}, prior["end_date"] if prior else selected_date)
             return {"previous": prior, "review": json.loads(row[0]) if row else None,
                     "history": history[-10:], "position": position,
+                    "unfinished_items": [i for i in self._learning(connection, selected_date) if prior and i["monthly_plan_id"] == prior["id"] and not i["archived"] and i["status"] != "Completed"],
                     "items": self._carryover(connection, selected_date)}
 
     def save_period_review(self, monthly, selected_date, items, confirmed=False):
@@ -242,6 +261,10 @@ class Store:
                 raise StorageError("The Monthly Plan changed. Refresh before confirming carryover.")
             if connection.execute("SELECT period_id FROM period_reviews WHERE period_id = %s", (monthly["id"],)).fetchone():
                 raise StorageError("This period was already reviewed in another session. Refresh to see the saved items.")
+            known_learning = {i['id']: i for i in self._learning(connection, selected_date)}
+            references = [i.get('monthly_item_id') for i in items if i.get('monthly_item_id')]
+            if len(references) != len(set(references)) or any(id not in known_learning or known_learning[id]['status'] == 'Completed' or known_learning[id]['archived'] for id in references):
+                raise StorageError('Choose distinct unfinished Monthly Plan items for carryover.')
             for item in items:
                 connection.execute("INSERT INTO carryover_items (id, item_data) VALUES (%s, %s)", (item["id"], json.dumps(item, ensure_ascii=False)))
             review = {"period_id": monthly["id"], "review_date": selected_date, "nothing_selected": not items, "monthly_plan": {k: monthly[k] for k in ("id", "title", "start_date", "end_date")}}
@@ -256,12 +279,20 @@ class Store:
             if not row:
                 raise StorageError("This carryover item no longer exists. Refresh.")
             item = json.loads(row[0])
+            if item.get('monthly_item_id') and (state == 'completed' or (state == 'outstanding' and item['state'] == 'completed')):
+                linked = next(i for i in self._learning(connection) if i['id'] == item['monthly_item_id'])
+                from uuid import uuid4
+                event = dict(id=uuid4().hex, item_id=linked['id'], status='Completed' if state == 'completed' else 'In progress', remaining='' if state == 'completed' else linked['description'], evidence='Teacher manually changed linked carryover', confirmed_complete=state == 'completed', manual=True, date=date.today().isoformat(), order=max([e['order'] for e in self._learning_events(connection)] + [0]) + 1)
+                connection.execute('INSERT INTO monthly_item_updates (id, update_data) VALUES (%s, %s)', (event['id'], json.dumps(event)))
+                self._project_position(connection)
             item["state"] = state
             connection.execute("UPDATE carryover_items SET item_data = %s WHERE id = %s", (json.dumps(item, ensure_ascii=False), id))
 
     @staticmethod
     def _validate_links(plan, lessons):
         for original, outcome in zip(plan["lessons"], lessons):
+            if outcome.get("monthly_item_links", []) != original.get("monthly_item_links", []):
+                raise StorageError("Monthly learning links changed. Refresh before saving.")
             linked = original.get("carryover_ids", [])
             if outcome.get("carryover_ids", []) != linked or any(id not in linked for id in outcome.get("completed_carryover_ids", [])):
                 raise StorageError("Carryover links changed. Refresh before saving progress.")
@@ -272,7 +303,7 @@ class Store:
     def _import_legacy(connection, legacy_path):
         # Import only into a completely empty destination, once, atomically.
         # A stale deployment must never overwrite teacher edits in PostgreSQL.
-        for table in [*DOCUMENTS, "actual_progress", "day_plans", "monthly_plans", "period_reviews", "carryover_items"]:
+        for table in [*DOCUMENTS, "actual_progress", "day_plans", "monthly_plans", "period_reviews", "carryover_items", "monthly_learning_items", "monthly_item_updates"]:
             if connection.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone():
                 return
         path = Path(legacy_path)
@@ -397,6 +428,14 @@ class Store:
             if connection.execute("SELECT id FROM actual_progress WHERE planning_date = %s LIMIT 1",
                                   (plan["planning_date"],)).fetchone():
                 raise StorageError("Progress already exists for this date. Review or correct it in Progress History.")
+            items = {i['id']: i for i in self._learning(connection, plan['planning_date']) if not i['archived']}
+            allowed_periods = {plan.get('monthly_plan', {}).get('id')}
+            allowed_ids = {i.get('monthly_item_id') for i in self._carryover(connection, plan['planning_date']) if i['state'] == 'outstanding'}
+            for lesson in plan['lessons']:
+                for link in lesson.get('monthly_item_links', []):
+                    item = items.get(link['item_id'])
+                    if not item or item['status'] == 'Completed' or (item['monthly_plan_id'] not in allowed_periods and item['id'] not in allowed_ids):
+                        raise StorageError('A linked Monthly Plan item changed. Generate again with the latest items.')
             known = {i["id"] for i in self._carryover(connection, plan["planning_date"]) if i["state"] == "outstanding"}
             if any(id not in known for lesson in plan["lessons"] for id in lesson.get("carryover_ids", [])):
                 raise StorageError("A carryover item changed while planning. Generate again with the latest items.")
@@ -409,7 +448,15 @@ class Store:
     def _project_position(connection):
         row = connection.execute("SELECT position_data FROM current_learning_position WHERE id = 1").fetchone()
         existing = json.loads(row[0]) if row else {}
+        existing = {k: str(v).split(MARKER, 1)[0] for k, v in existing.items()}
         updated = project_learning_position(existing, Store._history(connection))
+        from lesson_progress import subject_bucket
+        for item in Store._learning(connection):
+            if not item['archived'] and item['status'] != 'Not started':
+                key = subject_bucket(item['subject'])
+                if MARKER not in updated.get(key, ''):
+                    updated[key] = updated.get(key, '') + MARKER
+                updated[key] += f"- {item.get('last_date', '')} | [{item['id']}] {item['description']}: {item['status']}. Remaining: {item['remaining']}. Teacher evidence: {item['evidence']}\n"
         connection.execute("""
             INSERT INTO current_learning_position (id, position_data) VALUES (1, %s)
             ON CONFLICT (id) DO UPDATE SET position_data = EXCLUDED.position_data
@@ -461,6 +508,7 @@ class Store:
             """, (record_id, json.dumps(payload, ensure_ascii=False)))
             # Progress and learning evidence commit together; no AI call can
             # leave a paid/failed update between the two durable writes.
+            self._save_item_progress(connection, record_id, planning_date, lessons)
             position = self._project_position(connection)
         return position
 
@@ -496,6 +544,7 @@ class Store:
                   overall_status(lessons), notes, record_id))
             connection.execute("UPDATE lesson_progress SET lesson_data = %s WHERE record_id = %s",
                                (json.dumps(payload, ensure_ascii=False), record_id))
+            self._save_item_progress(connection, record_id, planning_date, lessons)
             return self._project_position(connection)
 
     def save_progress(self, planning_date, planning_day, status, notes):
@@ -546,7 +595,7 @@ class Store:
     def export_backup(self):
         with self._connection() as connection:
             self._lock(connection)
-            backup = {"format_version": 4}
+            backup = {"format_version": 5}
             for table, column in DOCUMENTS.items():
                 row = connection.execute(
                     f"SELECT {column} FROM {table} WHERE id = 1"
@@ -564,6 +613,8 @@ class Store:
             for row in backup["actual_progress"]:
                 if row["id"] in lesson_rows:
                     row.update(lesson_rows[row["id"]])
+            backup["monthly_learning_items"] = self._learning_raw(connection)
+            backup["monthly_item_updates"] = self._learning_events(connection)
             backup["period_reviews"] = [json.loads(row[0]) for row in connection.execute("SELECT review_data FROM period_reviews ORDER BY period_id").fetchall()]
             backup["carryover_items"] = [json.loads(row[0]) for row in connection.execute("SELECT item_data FROM carryover_items ORDER BY id").fetchall()]
             backup["monthly_plans"] = self._monthly(connection)
@@ -575,7 +626,7 @@ class Store:
     def restore_backup(self, backup):
         # Validate the whole upload before starting any write.
         try:
-            if not isinstance(backup, dict) or backup.get("format_version") not in (1, 2, 3, 4):
+            if not isinstance(backup, dict) or backup.get("format_version") not in (1, 2, 3, 4, 5):
                 raise ValueError("Unsupported backup")
             if not all(isinstance(backup.get(table), dict) for table in DOCUMENTS):
                 raise ValueError("Missing documents")
@@ -630,6 +681,30 @@ class Store:
                 validate_item(item)
                 if item["period_id"] not in {r["period_id"] for r in reviews}:
                     raise ValueError("Missing period review")
+            learning = backup.get('monthly_learning_items', []) if backup['format_version'] >= 5 else []
+            updates = backup.get('monthly_item_updates', []) if backup['format_version'] >= 5 else []
+            if not isinstance(learning, list) or not isinstance(updates, list):
+                raise ValueError('Invalid learning backup')
+            learning_ids = set()
+            for item in learning:
+                validate_learning_item(item)
+                if item['id'] in learning_ids or item['monthly_plan_id'] not in ids:
+                    raise ValueError('Invalid learning reference')
+                learning_ids.add(item['id'])
+            if len({u['id'] for u in updates}) != len(updates):
+                raise ValueError('Duplicate updates')
+            for update in updates:
+                validate_update(update)
+                school_date(update['date'])
+                if update['item_id'] not in learning_ids or not isinstance(update['order'], int) or (update.get('record_id') is not None and update['record_id'] not in {r.get('id') for r in rows if r.get('lessons')}):
+                    raise ValueError('Invalid update reference')
+            for item in carry_items:
+                if item.get('monthly_item_id') and item['monthly_item_id'] not in learning_ids:
+                    raise ValueError('Unknown carryover learning')
+            for saved in plans + rows:
+                for lesson in saved.get('lessons', []):
+                    if any(link['item_id'] not in learning_ids for link in lesson.get('monthly_item_links', [])):
+                        raise ValueError('Unknown lesson learning')
             dates = set()
             for plan in plans:
                 validate_plan(plan)
@@ -641,7 +716,7 @@ class Store:
         with self._connection() as connection:
             self._lock(connection)
             # Never overwrite existing durable teacher edits through restore.
-            for table in [*DOCUMENTS, "actual_progress", "day_plans", "lesson_progress", "monthly_plans", "period_reviews", "carryover_items"]:
+            for table in [*DOCUMENTS, "actual_progress", "day_plans", "lesson_progress", "monthly_plans", "period_reviews", "carryover_items", "monthly_learning_items", "monthly_item_updates"]:
                 if connection.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone():
                     return False
             for table, column in DOCUMENTS.items():
@@ -649,6 +724,7 @@ class Store:
                     f"INSERT INTO {table} (id, {column}) VALUES (1, %s)",
                     (json.dumps(backup[table], ensure_ascii=False),),
                 )
+            record_ids = {}
             for row in rows:
                 record_id = connection.execute("""
                     INSERT INTO actual_progress
@@ -657,6 +733,8 @@ class Store:
                 """, tuple(row.get(key) for key in (
                     "planning_day", "subject", "lesson_topic", "status", "notes", "planning_date"
                 ))).fetchone()[0]
+                if "id" in row:
+                    record_ids[row["id"]] = record_id
                 if "lessons" in row:
                     payload = {key: row[key] for key in ("plan_id", "overview", "lessons")}
                     if row.get("monthly_plan"):
@@ -675,4 +753,11 @@ class Store:
                 connection.execute("INSERT INTO period_reviews (period_id, review_data) VALUES (%s, %s)", (review["period_id"], json.dumps(review)))
             for item in carry_items:
                 connection.execute("INSERT INTO carryover_items (id, item_data) VALUES (%s, %s)", (item["id"], json.dumps(item, ensure_ascii=False)))
+            for item in learning:
+                connection.execute('INSERT INTO monthly_learning_items (id, item_data) VALUES (%s, %s)', (item['id'], json.dumps(item)))
+            for update in updates:
+                update = dict(update)
+                if 'record_id' in update:
+                    update['record_id'] = record_ids[update['record_id']]
+                connection.execute('INSERT INTO monthly_item_updates (id, update_data) VALUES (%s, %s)', (update['id'], json.dumps(update)))
         return True

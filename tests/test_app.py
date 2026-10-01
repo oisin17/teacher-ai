@@ -74,6 +74,51 @@ class AppTests(unittest.TestCase):
         self.assertEqual(len(app.error), 0)
         return app
 
+    def test_item_review_extract_save_merge_and_restore(self):
+        import json
+        self.client.responses.create.return_value = SimpleNamespace(output_text=json.dumps({'items': [dict(subject='History', description='Activity one', type='discrete', source='English narrative.'), dict(subject='History', description='Activity two', type='broad', source='English narrative.')]}))
+        app = self.new_app()
+        self.navigate(app, 'Planning Setup')
+        next(i for i in app.selectbox if i.label == 'Monthly Plan to add or edit').set_value('9').run()
+        self.button(app, 'Suggest learning items').click().run()
+        self.assertEqual(len(app.exception), 0)
+        self.button(app, 'Save learning items').click().run()
+        self.assertEqual(len(app.exception), 0)
+        saved = self.store.list_learning_items('9')
+        self.assertEqual(len(saved), 2)
+        next(i for i in app.multiselect if i.label == 'Merge duplicate / overlapping items').set_value([i['id'] for i in saved])
+        next(i for i in app.text_input if i.label == 'Merged item description').set_value('Merged activity')
+        self.button(app, 'Save learning items').click().run()
+        self.assertEqual(len(app.exception), 0)
+        saved = self.store.list_learning_items('9')
+        self.assertEqual(sum(not i['archived'] for i in saved), 1)
+        self.assertEqual(next(i for i in saved if not i['archived'])['type'], 'broad')
+
+    def test_item_suggestions_remain_drafts_and_explicit_completion_required(self):
+        import json
+        from monthly_learning import fingerprint
+        monthly = self.store.select_monthly_plan('2026-09-30')
+        item = dict(id='test-item', monthly_plan_id='9', subject='English', description='Opening paragraph', source='English narrative.', fingerprint=fingerprint(monthly['plan_text']), type='discrete', archived=False)
+        self.store.save_learning_items(monthly, [item])
+        output = json.loads(generation_output())
+        output['lessons'][1]['monthly_item_links'] = [dict(item_id='test-item', coverage='Opening paragraph')]
+        self.client.responses.create.return_value = SimpleNamespace(output_text=json.dumps(output))
+        app = self.new_app()
+        app.date_input[0].set_value(date(2026, 9, 30)).run()
+        self.button(app, "✨ Generate Today's Plan").click().run()
+        self.button(app, 'Mark all completed').click().run()
+        next(i for i in app.text_input if i.label == 'English — Narrative openings note (optional)').set_value('Whole opening paragraph finished')
+        lesson = self.store.load_day('2026-09-30')['plan']['lessons'][1]
+        self.client.responses.create.return_value = SimpleNamespace(output_text=json.dumps({'updates':[dict(lesson_id=lesson['lesson_id'], item_id='test-item', status='Completed', remaining='', evidence='Whole opening paragraph finished')]}))
+        self.button(app, 'Suggest item outcomes from notes').click().run()
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual(self.store.list_learning_items()[0]['status'], 'Not started')
+        self.assertEqual(self.store.load_progress_history(), [])
+        next(i for i in app.checkbox if i.label == 'Whole item completed — explicitly confirm').check()
+        self.button(app, "Save Today's Progress").click().run()
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual(self.store.list_learning_items()[0]['status'], 'Completed')
+
     def test_thursday_generation_cannot_overwrite_singing(self):
         import json
         self.store.save_document("teacher_profile", {"class_level": "5th Class", "thursday_singing": True})
