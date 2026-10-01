@@ -140,6 +140,8 @@ def lesson_progress_inputs(lessons, prefix):
         for lesson in lessons:
             st.session_state[f"{prefix}_{lesson['lesson_id']}_status"] = "Completed"
     outcomes = []
+    if prefix + '_reviewed_notes' in st.session_state:
+        st.info('Review suggested item outcomes below. Nothing has been saved; Save accepts them. Whole-item completion needs explicit confirmation.')
     learning_items = {i["id"]: i for i in storage_call(store.list_learning_items)}
     carry_labels = {i["id"]: i["learning"] for i in storage_call(store.list_carryover)}
     with st.form(f"{prefix}_form"):
@@ -186,11 +188,14 @@ def lesson_progress_inputs(lessons, prefix):
             "Save Today's Progress" if prefix.startswith("today_") else "Save Correction",
             type="primary",
         )
-    if suggest:
+    review_hash = hashlib.sha256(json.dumps([(l['lesson_id'], l['status'], l['note']) for l in outcomes]).encode()).hexdigest()
+    mixed_review = submitted and any(l['status'] == 'Partially completed' and l['note'] and len(l.get('monthly_item_links', [])) > 1 and not l.get('item_updates') for l in outcomes) and st.session_state.get(prefix + '_reviewed_notes') != review_hash
+    if suggest or mixed_review:
         try:
             with st.spinner('Suggesting item outcomes — nothing is saved…'):
                 suggestions = suggest_outcomes(client, outcomes, learning_items)
             st.session_state[prefix + '_item_suggestions'] = suggestions
+            st.session_state[prefix + '_reviewed_notes'] = review_hash
             for lesson in outcomes:
                 for update in suggestions.get(lesson['lesson_id'], []):
                     base = prefix + lesson['lesson_id'] + update['item_id']

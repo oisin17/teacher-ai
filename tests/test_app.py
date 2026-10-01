@@ -119,6 +119,35 @@ class AppTests(unittest.TestCase):
         self.assertEqual(len(app.exception), 0)
         self.assertEqual(self.store.list_learning_items()[0]['status'], 'Completed')
 
+    def test_mixed_partial_note_requires_review_before_durable_save(self):
+        import json
+        from monthly_learning import fingerprint
+        monthly = self.store.select_monthly_plan('2026-09-30')
+        items = [dict(id=id, monthly_plan_id='9', subject='English', description=description, source='English narrative.', fingerprint=fingerprint(monthly['plan_text']), type='discrete', archived=False) for id, description in [('opening', 'Opening paragraph'), ('ending', 'Final activity')]]
+        self.store.save_learning_items(monthly, items)
+        output = json.loads(generation_output())
+        output['lessons'][1]['monthly_item_links'] = [dict(item_id=i['id'], coverage=i['description']) for i in items]
+        self.client.responses.create.return_value = SimpleNamespace(output_text=json.dumps(output))
+        app = self.new_app()
+        app.date_input[0].set_value(date(2026, 9, 30)).run()
+        self.button(app, "✨ Generate Today's Plan").click().run()
+        self.button(app, 'Mark all completed').click().run()
+        next(i for i in app.radio if i.label == 'English — Narrative openings progress').set_value('Partially completed')
+        next(i for i in app.text_input if i.label == 'English — Narrative openings note (optional)').set_value('Opening finished; final activity unfinished')
+        lesson = self.store.load_day('2026-09-30')['plan']['lessons'][1]
+        proposals = [dict(lesson_id=lesson['lesson_id'], item_id='opening', status='Completed', remaining='', evidence='Opening finished'), dict(lesson_id=lesson['lesson_id'], item_id='ending', status='In progress', remaining='final activity unfinished', evidence='final activity unfinished')]
+        self.client.responses.create.return_value = SimpleNamespace(output_text=json.dumps({'updates': proposals}))
+        self.button(app, "Save Today's Progress").click().run()
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual(self.store.load_progress_history(), [])
+        self.assertTrue(all(i['status'] == 'Not started' for i in self.store.list_learning_items()))
+        next(i for i in app.checkbox if i.label == 'Whole item completed — explicitly confirm').check()
+        self.button(app, "Save Today's Progress").click().run()
+        self.assertEqual(len(app.exception), 0)
+        current = {i['id']: i for i in self.store.list_learning_items()}
+        self.assertEqual(current['opening']['status'], 'Completed')
+        self.assertEqual(current['ending']['remaining'], 'final activity unfinished')
+
     def test_thursday_generation_cannot_overwrite_singing(self):
         import json
         self.store.save_document("teacher_profile", {"class_level": "5th Class", "thursday_singing": True})
