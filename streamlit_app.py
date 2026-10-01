@@ -4,6 +4,8 @@ import io
 import hashlib
 from uuid import uuid4
 from monthly_plans import suggest_dates
+from monthly_learning_ui import review_items, item_inputs, suggest_outcomes
+from monthly_learning import MARKER
 import importlib
 import timetable_constraints
 if getattr(timetable_constraints, "CONSTRAINT_VERSION", None) != 2:
@@ -16,13 +18,13 @@ from carryover import SUGGESTION_FORMAT, retain_explicit_links
 from pypdf import PdfReader
 from docx import Document
 import lesson_progress
-refresh_lessons = "carryover_ids" not in lesson_progress.PLAN_FORMAT["schema"]["properties"]["lessons"]["items"]["properties"]
+refresh_lessons = "monthly_item_links" not in lesson_progress.PLAN_FORMAT["schema"]["properties"]["lessons"]["items"]["properties"]
 if refresh_lessons:
     importlib.reload(lesson_progress)
 import persistence
 # Streamlit hot reload can retain the previous imported storage module.
 # Reload only when that cached module lacks this rollout's additive API.
-if refresh_lessons or not hasattr(persistence.Store, "carryover_context"):
+if refresh_lessons or not hasattr(persistence.Store, "list_learning_items"):
     importlib.reload(persistence)
 from persistence import Store, StorageError
 import json
@@ -57,7 +59,7 @@ def initialise_storage(database_url, schema_version):
     Store(database_url).initialise()
 
 
-storage_call(initialise_storage, st.secrets.get("DATABASE_URL", ""), 5)
+storage_call(initialise_storage, st.secrets.get("DATABASE_URL", ""), 6)
 
 
 def save_teacher_profile(profile):
@@ -131,6 +133,7 @@ def lesson_progress_inputs(lessons, prefix):
         for lesson in lessons:
             st.session_state[f"{prefix}_{lesson['lesson_id']}_status"] = "Completed"
     outcomes = []
+    learning_items = {i["id"]: i for i in storage_call(store.list_learning_items)}
     carry_labels = {i["id"]: i["learning"] for i in storage_call(store.list_carryover)}
     with st.form(f"{prefix}_form"):
         # Submit draft inputs to the callback so a late bulk action preserves
@@ -166,11 +169,29 @@ def lesson_progress_inputs(lessons, prefix):
             outcome = {**lesson, "status": status, "note": note.strip()}
             if lesson.get("carryover_ids"):
                 outcome["completed_carryover_ids"] = completed_ids
+            draft = st.session_state.get(prefix + '_item_suggestions', {}).get(lesson['lesson_id'])
+            if draft is not None:
+                outcome['item_updates'] = draft
+            outcome["item_updates"] = item_inputs(outcome, prefix, learning_items)
             outcomes.append(outcome)
+        suggest = st.form_submit_button('Suggest item outcomes from notes') if any(l.get('monthly_item_links') for l in lessons) else False
         submitted = st.form_submit_button(
             "Save Today's Progress" if prefix.startswith("today_") else "Save Correction",
             type="primary",
         )
+    if suggest:
+        try:
+            with st.spinner('Suggesting item outcomes — nothing is saved…'):
+                suggestions = suggest_outcomes(client, outcomes, learning_items)
+            st.session_state[prefix + '_item_suggestions'] = suggestions
+            for lesson in outcomes:
+                for update in suggestions.get(lesson['lesson_id'], []):
+                    base = prefix + lesson['lesson_id'] + update['item_id']
+                    # Widget updates on the next rerun, after this form has submitted.
+                    st.session_state[base + '_pending'] = update
+            st.rerun()
+        except Exception:
+            st.warning('Suggestions could not be verified. Save conservative progress or enter item exceptions yourself.')
     return outcomes, submitted
 
 
@@ -206,6 +227,9 @@ def transition_review(monthly, selected_date):
                 st.caption(suggestion["evidence"][:1500])
                 if keep:
                     chosen.append({"subject": suggestion["subject"], "learning": learning, "evidence": suggestion["evidence"][:1500]})
+            for learning_item in context.get('unfinished_items', []):
+                if st.checkbox(f"Carry over Monthly item: {learning_item['subject']} — {learning_item['remaining'] or learning_item['description']}", value=False, key=draft_key + learning_item['id']):
+                    chosen.append(dict(subject=learning_item['subject'], learning=(learning_item['remaining'] or learning_item['description'])[:300], evidence=learning_item['evidence'] or 'Teacher confirmed unfinished Monthly Plan item', monthly_item_id=learning_item['id']))
             subject = st.selectbox("Add another item — subject", ["Maths", "English", "Gaeilge", "SESE", "Other"])
             learning = st.text_area("Another carryover item (optional)", max_chars=900, help="One item per line; keep each under 300 characters.")
             confirm = st.form_submit_button("Save carryover and continue", type="primary")
@@ -232,6 +256,14 @@ def carryover_controls(items):
         for item in items:
             st.write(f"**{item['subject']} — {item['learning']}** ({item['state']})")
             st.caption(item["evidence"])
+            if not item.get('monthly_item_id'):
+                available = [i for i in storage_call(store.list_learning_items) if not i['archived']]
+                if available:
+                    with st.expander('Link to a Monthly Plan item (optional)'):
+                        target = st.selectbox('Same underlying learning item', [i['id'] for i in available], format_func=lambda id: next(i['subject'] + ' — ' + i['description'] for i in available if i['id'] == id), key='carry_link_' + item['id'])
+                        if st.button('Confirm same learning', key='carry_link_save_' + item['id']):
+                            storage_call(store.link_carryover_item, item['id'], target)
+                            st.rerun()
             if item["state"] == "outstanding":
                 completed = st.button("Mark complete", key=f"complete_{item['id']}")
                 removed = st.button("Remove", key=f"remove_{item['id']}")
@@ -394,6 +426,8 @@ if page == "Today":
         else:
             with st.spinner("Teacher AI is planning your day..."):
                 try:
+                    learning_items = storage_call(store.list_learning_items, None, planning_date.isoformat())
+                    current_items = [i for i in learning_items if not i["archived"] and (i["monthly_plan_id"] == selected_monthly["id"] or i["id"] in {c.get("monthly_item_id") for c in outstanding_carryover})]
                     recent_progress = load_recent_progress()
                     current_learning_position = load_current_learning_position()
                     st.session_state["current_learning_position"] = current_learning_position
@@ -487,6 +521,8 @@ if page == "Today":
                             "Teacher notes override both the selected status and any conflicting planned intention. "
                             "Use newer dated evidence ahead of older entries; never assume a completed lesson finishes its unit.\n\n"
 
+                            f"CONFIRMED MONTHLY LEARNING ITEMS (status and remaining learning are authoritative):\n{current_items}\n"
+                            "For every lesson addressing a confirmed item, put its exact item_id and the specific addressed scope in monthly_item_links. Use [] when no confirmed item applies. Never fabricate IDs, link just by subject, repeat completed items, or claim one lesson finishes a recurring/broad objective. Plan remaining learning instead of repeating already completed aspects. Include 'Monthly item:' plus the exact ID and addressed scope in lesson details.\n"
                             f"TEACHER PROFILE:\n{teacher_profile}\n\n"
                             f"WEEKLY TIMETABLE:\n{timetable_text}\n\n"
                             f"CURRENT MONTHLY PLAN (teacher-confirmed {selected_monthly['start_date']} to {selected_monthly['end_date']}; these override stale document headings):\n{monthly_plan_text}\n\n"
@@ -699,7 +735,7 @@ elif page == "Current Learning":
         }
         # Explicit teacher edits become confirmed context; newer saved lesson
         # outcomes can subsequently update it without discarding the edit.
-        position = {key: value.replace(EVIDENCE_MARKER, "\n\nTeacher-confirmed lesson context:\n")
+        position = {key: value.replace(MARKER, "\n\nTeacher-confirmed item context:\n").replace(EVIDENCE_MARKER, "\n\nTeacher-confirmed lesson context:\n")
                     for key, value in position.items()}
         save_current_learning_position(position)
         st.session_state["current_learning_position"] = position
@@ -1014,6 +1050,8 @@ elif page == "Planning Setup":
             else:
                 st.success("Monthly Plan saved with confirmed dates.")
                 st.rerun()
+    if existing and existing["start_date"]:
+        review_items(store, client, existing, storage_call)
     st.subheader("Yearly Plan")
 
     yearly_plan = st.file_uploader(

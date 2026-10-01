@@ -145,3 +145,10 @@ and restorable. Manual completion can be reopened. Linked lesson completion is
 derived from durable progress so correcting an outcome reopens unfinished work.
 A Completed lesson alone never completes carryover: the teacher must also select
 the item completion checkbox. Backup format 4 includes these records and links.
+
+Item progress uses additive `monthly_learning_items` / `monthly_item_updates` tables.
+Backup format 5 includes stable definitions, source quotes, archived records, linked
+lesson outcomes and teacher corrections; formats 1–4 remain restorable. Progress
+record IDs in item events are remapped during restore. Existing monthly documents
+and records are preserved. Extracted items and AI note mappings are drafts until
+teacher save; completion of a lesson alone never completes a monthly objective.
