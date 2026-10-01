@@ -633,6 +633,14 @@ class StoreTests(unittest.TestCase):
         self.assertTrue(all(i['status'] == 'Not started' for i in self.store.list_learning_items()))
 
 
+    def test_new_explicit_teacher_outcome_can_reopen_completed_item(self):
+        from monthly_learning import project
+        item = dict(id='item', description='letter')
+        updates = [dict(id='a', item_id='item', date='2026-10-01', order=1, status='Completed', remaining='', evidence='teacher whole item finished', manual=True), dict(id='b', item_id='item', date='2026-10-02', order=2, status='In progress', remaining='last paragraph', evidence='teacher accepted correction', accepted=True)]
+        self.assertEqual(project([item], updates)[0]['remaining'], 'last paragraph')
+        updates[1]['accepted'] = False
+        self.assertEqual(project([item], updates)[0]['status'], 'Completed')
+
     def test_shared_item_lesson_carryover_completion_and_correction(self):
         monthly, items, plan = self.learning_setup()
         october = self.monthly('oct', '2026-10-01', '2026-10-31')

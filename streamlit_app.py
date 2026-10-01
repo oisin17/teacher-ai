@@ -5,8 +5,11 @@ import hashlib
 from uuid import uuid4
 from monthly_plans import suggest_dates
 import importlib
+import monthly_learning
+if getattr(monthly_learning, "LEARNING_VERSION", None) != 2:
+    importlib.reload(monthly_learning)
 import monthly_learning_ui
-if getattr(monthly_learning_ui, "MODULE_VERSION", None) != 3:
+if getattr(monthly_learning_ui, "MODULE_VERSION", None) != 4:
     importlib.reload(monthly_learning_ui)
 from monthly_learning_ui import review_items, item_inputs, suggest_outcomes
 from monthly_learning import MARKER, fingerprint
@@ -28,7 +31,7 @@ if refresh_lessons:
 import persistence
 # Streamlit hot reload can retain the previous imported storage module.
 # Reload only when that cached module lacks this rollout's additive API.
-if refresh_lessons or getattr(persistence, "PERSISTENCE_VERSION", None) != 7:
+if refresh_lessons or getattr(persistence, "PERSISTENCE_VERSION", None) != 8:
     importlib.reload(persistence)
 from persistence import Store, StorageError
 import json

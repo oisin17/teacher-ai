@@ -4,6 +4,7 @@ import json
 from uuid import uuid4
 from datetime import date
 
+LEARNING_VERSION = 2
 STATUSES = ('Not started', 'In progress', 'Completed')
 TYPES = ('discrete', 'recurring', 'broad')
 MARKER = '\n\nConfirmed Monthly Plan item evidence:\n'
@@ -46,7 +47,7 @@ def project(items, updates):
             raise ValueError('Unknown item update')
         item = result[event['item_id']]
         # Untaught and ambiguous evidence never undo previous completion.
-        if event.get('manual') or event['status'] == 'Completed' or item['status'] != 'Completed':
+        if event.get('manual') or event.get('accepted') or event['status'] == 'Completed' or item['status'] != 'Completed':
             item.update({k: event[k] for k in ('status', 'remaining', 'evidence')})
             item['last_date'] = event['date']
     return list(result.values())
@@ -168,7 +169,7 @@ class LearningStore:
                     continue
                 else:
                     update = dict(item_id=item_id, status='In progress', remaining=lesson['note'] or 'Exact remaining scope is not yet confirmed.', evidence=lesson['note'] or lesson['learning_intention'])
-                event = {**update, 'id': uuid4().hex, 'date': planning_date, 'order': order, 'record_id': record_id, 'lesson_id': lesson['lesson_id'], 'manual': False}
+                event = {**update, 'id': uuid4().hex, 'date': planning_date, 'order': order, 'record_id': record_id, 'lesson_id': lesson['lesson_id'], 'manual': False, 'accepted': item_id in accepted or item_id in carry_finished}
                 connection.execute('INSERT INTO monthly_item_updates (id, update_data) VALUES (%s, %s)', (event['id'], json.dumps(event, ensure_ascii=False)))
 
     def link_carryover_item(self, carry_id, item_id):

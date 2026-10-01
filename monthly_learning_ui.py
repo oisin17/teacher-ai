@@ -1,5 +1,5 @@
 """Optional item review and exception-only daily outcomes."""
-MODULE_VERSION = 3
+MODULE_VERSION = 4
 import json
 from uuid import uuid4
 import streamlit as st
@@ -43,7 +43,7 @@ def review_items(store, client, monthly, call):
     for subject in sorted({i['subject'] for i in saved if not i['archived']}):
         items = [i for i in saved if i['subject'] == subject and not i['archived']]
         st.write(f"**{subject}** — " + ' · '.join(f"{sum(i['status'] == status for i in items)} {status.lower()}" for status in reversed(STATUSES)))
-    key = 'learning_review_' + monthly['id'] + fingerprint(monthly['plan_text'])[:12]
+    key = 'learning_review_' + monthly['id'] + fingerprint(monthly['plan_text'])[:12] + fingerprint(json.dumps(saved, sort_keys=True))[:12]
     changed_document = any(i['fingerprint'] != fingerprint(monthly['plan_text']) and not i['archived'] for i in saved)
     if changed_document:
         st.warning('This document changed. Archive affected old items and review new suggestions; historical lesson references remain intact.')

@@ -28,7 +28,7 @@ DOCUMENTS = {
     "current_learning_position": "position_data",
 }
 LOCK_ID = 73190421
-PERSISTENCE_VERSION = 7
+PERSISTENCE_VERSION = 8
 
 
 from monthly_learning import LearningStore, validate_item as validate_learning_item, validate_update, MARKER
