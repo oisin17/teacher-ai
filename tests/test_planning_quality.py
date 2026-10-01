@@ -21,6 +21,13 @@ def review(findings=None, decisions=None):
 
 
 class QualityTests(unittest.TestCase):
+    def test_overview_cannot_schedule_a_teaching_slot_without_a_lesson(self):
+        c=context(); p=candidate(c)
+        p['overview'] += '\n10:00–10:30 English — procedural reading'
+        self.assertIn('overview_missing_lesson',{f['code'] for f in code_checks(p,c)})
+        p['overview']=p['overview'].replace('English — procedural reading','Morning meeting')
+        self.assertNotIn('overview_missing_lesson',{f['code'] for f in code_checks(p,c)})
+
     def test_code_checks_run_before_model_and_one_repair_limit(self):
         c=context();p=candidate(c);p['lessons'][0]['phases'][0]['minutes']=50
         p['overview']=p['overview'].replace('09:30–10:00','09:30–10:10')

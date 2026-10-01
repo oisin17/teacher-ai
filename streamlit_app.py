@@ -37,7 +37,7 @@ if refresh_lessons or getattr(persistence, "PERSISTENCE_VERSION", None) != 11:
     importlib.reload(persistence)
 from persistence import Store, StorageError
 import planning_quality
-if getattr(planning_quality, "QUALITY_MODULE_VERSION", None) != 12:
+if getattr(planning_quality, "QUALITY_MODULE_VERSION", None) != 13:
     importlib.reload(planning_quality)
 from planning_quality import quality_gate, QualityFailure, protected_blocks
 import json
@@ -471,6 +471,7 @@ if page == "Today":
                     generation_started = perf_counter()
                     response = client.responses.create(
                         model="gpt-5.4-mini",
+                        reasoning={"effort": "low"},
                         text={"format": generation_format},
                         input=(
                             "You are Teacher AI, an adaptive planning assistant "
@@ -562,6 +563,7 @@ if page == "Today":
                             f"CONFIRMED MONTHLY LEARNING ITEMS (status and remaining learning are authoritative):\n{generation_items}\n"
                             f"AWAITING TEACHER CLARIFICATION — do not prioritise or schedule these ambiguous scopes, even if present in original document text: {held_items}\n"
                             "For every lesson addressing a confirmed item, put its exact item_id and the specific addressed scope in monthly_item_links. Use [] when no confirmed item applies. Never fabricate IDs, link just by subject, repeat completed items, or claim one lesson finishes a recurring/broad objective. Plan remaining learning instead of repeating already completed aspects. Include 'Monthly item:' plus the exact ID and addressed scope in lesson details.\n"
+                            "A link must be demonstrated by actual phases: if the addressed scope involves a graphic organiser/GRRR, named text or specific task, show that supported method/task explicitly. Do not attach an item to generic same-subject activities. Use only the limited scope actually taught; a lesson need not cover the entire item.\n"
                             f"TEACHER PROFILE:\n{teacher_profile}\n\n"
                             f"WEEKLY TIMETABLE:\n{timetable_text}\n\n"
                             f"CURRENT MONTHLY PLAN (teacher-confirmed {selected_monthly['start_date']} to {selected_monthly['end_date']}; these override stale document headings):\n{monthly_plan_text}\n\n"
@@ -571,6 +573,7 @@ if page == "Today":
                             "A carryover lesson must state the specific unfinished learning it addresses. Teacher completion of carryover overrides stale older evidence for that item.\n"
                             "Do not label an unknown previous lesson as the new month's topic. If the prior task/topic is unspecified, explicitly include a brief teacher/pupil recall check to identify it, then resume the actual missed/unfinished task. "
                             "Link carryover only when the lesson phases explicitly identify and address that prior task; sharing a subject is insufficient.\n"
+                            "If prior English/Gaeilge learning is unspecified, make recall/identification the first phase, then resume that actual task. Do not call it procedural writing/food work or attach October item links to it without evidence. Separate new October work into a clearly distinct phase/lesson with its own evidenced item link.\n"
                             f"ALL REVIEWED CARRYOVER DECISIONS:\n{carry_context['items']}\n\n"
                             f"YEARLY PLAN:\n{yearly_plan_text}\n\n"
                             f"CURRENT LEARNING POSITION (teacher-confirmed current classroom position):\n{current_learning_position}\n\n"

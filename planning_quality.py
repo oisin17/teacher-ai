@@ -9,7 +9,7 @@ from timetable_constraints import interval, TIME_RANGE, singing_day
 from monthly_learning import planning_allowed, fingerprint
 
 RUBRIC_VERSION = 1
-QUALITY_MODULE_VERSION = 12
+QUALITY_MODULE_VERSION = 13
 CATEGORIES = ('alignment', 'progression', 'timetable', 'lesson_quality', 'practicality', 'specificity', 'usability')
 STATES = ('Pass', 'Revise', 'Blocked', 'Unchecked')
 HARD_CODES = ('unsupported_content', 'invalid_scope', 'unfinished_contradiction', 'completed_repetition', 'broad_completion', 'held_scope', 'unavailable_resource', 'missing_essential')
@@ -108,6 +108,12 @@ def code_checks(plan, context):
     for a,b in zip(sorted(slots), sorted(slots)[1:]):
         if b[0] < a[1]:
             problems.append(issue('lesson_overlap', 'Teaching lessons overlap.', b[2]))
+    for start,end,line in overview:
+        if any(s==start and e==end for s,e,_ in slots) or any(s==start and e==end for s,e,_ in blocks):
+            continue
+        if re.search(r'roll call|morning meeting|arrival|dismissal|transition|assembly|break|lunch|yard|tidy|pack.up|morning work|work it out|correction',line,re.I):
+            continue
+        problems.append(issue('overview_missing_lesson', f'Overview teaching slot {start//60:02}:{start%60:02}–{end//60:02}:{end%60:02} has no matching lesson; provide that lesson or correct the overview.', evidence=line))
     for a,b in zip(sorted(overview),sorted(overview)[1:]):
         if b[0] < a[1]:
             problems.append(issue('overview_overlap', 'Overview timetable blocks overlap.'))
