@@ -72,7 +72,7 @@ def initialise_storage(database_url, schema_version):
     Store(database_url).initialise()
 
 
-storage_call(initialise_storage, st.secrets.get("DATABASE_URL", ""), 6)
+storage_call(initialise_storage, st.secrets.get("DATABASE_URL", ""), persistence.PERSISTENCE_VERSION)
 
 
 def save_teacher_profile(profile):
