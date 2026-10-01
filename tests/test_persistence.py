@@ -612,6 +612,11 @@ class StoreTests(unittest.TestCase):
         self.store.correct_learning_item('item-0', 'In progress', 'unfinished final step', 'teacher correction', False)
         self.assertEqual(self.store.list_carryover()[0]['state'], 'outstanding')
         self.assertEqual(self.store.list_carryover()[0]['learning'], 'unfinished final step')
+        november = self.monthly('nov', '2026-11-01', '2026-11-30')
+        self.store.save_monthly_plan(november, True)
+        with self.assertRaises(StorageError):
+            self.store.save_period_review(november, '2026-11-01', [{**carry, 'id': 'duplicate', 'period_id': 'nov', 'created_date': '2026-11-01'}], True)
+
 
     def test_item_backup_roundtrip_and_invalid_reference_atomic(self):
         monthly, items, plan = self.learning_setup()

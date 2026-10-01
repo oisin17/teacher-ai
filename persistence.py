@@ -28,7 +28,7 @@ DOCUMENTS = {
     "current_learning_position": "position_data",
 }
 LOCK_ID = 73190421
-PERSISTENCE_VERSION = 8
+PERSISTENCE_VERSION = 9
 
 
 from monthly_learning import LearningStore, validate_item as validate_learning_item, validate_update, MARKER
@@ -235,10 +235,11 @@ class Store(LearningStore):
             history = [r for r in self._history(connection) if prior and prior["start_date"] <= r["planning_date"] <= prior["end_date"] and r["planning_date"] < selected_date]
             row_position = connection.execute("SELECT position_data FROM current_learning_position WHERE id = 1").fetchone()
             position = before_date(json.loads(row_position[0]) if row_position else {}, prior["end_date"] if prior else selected_date)
+            carry_items = self._carryover(connection, selected_date)
             return {"previous": prior, "review": json.loads(row[0]) if row else None,
                     "history": history[-10:], "position": position,
-                    "unfinished_items": [i for i in self._learning(connection, selected_date) if prior and i["monthly_plan_id"] == prior["id"] and not i["archived"] and (i["status"] == "In progress" or i["id"] in {link["item_id"] for r in history for lesson in r.get("lessons", []) if lesson["status"] != "Completed" for link in lesson.get("monthly_item_links", [])})][:6],
-                    "items": self._carryover(connection, selected_date)}
+                    "unfinished_items": [i for i in self._learning(connection, selected_date) if prior and i["monthly_plan_id"] == prior["id"] and not i["archived"] and i["id"] not in {c.get("monthly_item_id") for c in carry_items if c["state"] == "outstanding"} and (i["status"] == "In progress" or i["id"] in {link["item_id"] for r in history for lesson in r.get("lessons", []) if lesson["status"] != "Completed" for link in lesson.get("monthly_item_links", [])})][:6],
+                    "items": carry_items}
 
     def save_period_review(self, monthly, selected_date, items, confirmed=False):
         try:
@@ -264,6 +265,8 @@ class Store(LearningStore):
                 raise StorageError("This period was already reviewed in another session. Refresh to see the saved items.")
             known_learning = {i['id']: i for i in self._learning(connection, selected_date)}
             references = [i.get('monthly_item_id') for i in items if i.get('monthly_item_id')]
+            if set(references) & {i.get('monthly_item_id') for i in self._carryover(connection, selected_date) if i['state'] == 'outstanding'}:
+                raise StorageError('This learning already has outstanding carryover. Keep the existing item instead of duplicating it.')
             if len(references) != len(set(references)) or any(id not in known_learning or known_learning[id]['status'] == 'Completed' or known_learning[id]['archived'] for id in references):
                 raise StorageError('Choose distinct unfinished Monthly Plan items for carryover.')
             for item in items:
