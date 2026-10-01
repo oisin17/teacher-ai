@@ -2,6 +2,7 @@
 import hashlib
 import json
 from uuid import uuid4
+from datetime import date
 
 STATUSES = ('Not started', 'In progress', 'Completed')
 TYPES = ('discrete', 'recurring', 'broad')
@@ -99,12 +100,13 @@ class LearningStore:
                     raise StorageError('Learning items changed in another session. Refresh before editing.')
                 if old and (old['monthly_plan_id'] != i['monthly_plan_id'] or old['fingerprint'] != i['fingerprint']):
                     raise StorageError('A referenced item cannot be silently replaced. Archive it and create a new item.')
-                i = {**i, 'revision': i.get('revision', 0) + 1}
+                i = {k: v for k, v in i.items() if k not in ('status', 'remaining', 'evidence', 'last_date')}
+                i['revision'] = i.get('revision', 0) + 1
                 connection.execute('INSERT INTO monthly_learning_items (id, item_data) VALUES (%s, %s) ON CONFLICT (id) DO UPDATE SET item_data = EXCLUDED.item_data', (i['id'], json.dumps(i, ensure_ascii=False)))
                 if i.get('merged_from') and not old and all(id in previous_progress for id in parents):
                     unfinished = [previous_progress[id] for id in parents if previous_progress[id]['status'] != 'Completed']
                     if any(previous_progress[id]['status'] != 'Not started' for id in parents):
-                        event = dict(id=uuid4().hex, item_id=i['id'], status='In progress', remaining='; '.join(x['remaining'] or x['description'] for x in unfinished)[:1000] or 'Merged scope needs teacher confirmation', evidence='Merged item; preserved prior evidence: ' + '; '.join(previous_progress[id]['evidence'] for id in parents)[:1500], manual=True, date=__import__('datetime').date.today().isoformat(), order=max([e['order'] for e in self._learning_events(connection)] + [0]) + 1)
+                        event = dict(id=uuid4().hex, item_id=i['id'], status='In progress', remaining='; '.join(x['remaining'] or x['description'] for x in unfinished)[:1000] or 'Merged scope needs teacher confirmation', evidence='Merged item; preserved prior evidence: ' + '; '.join(previous_progress[id]['evidence'] for id in parents)[:1500], manual=True, date=date.today().isoformat(), order=max([e['order'] for e in self._learning_events(connection)] + [0]) + 1)
                         connection.execute('INSERT INTO monthly_item_updates (id, update_data) VALUES (%s, %s)', (event['id'], json.dumps(event)))
                     linked = [json.loads(r[0]) for r in connection.execute('SELECT item_data FROM carryover_items ORDER BY id').fetchall() if json.loads(r[0]).get('monthly_item_id') in parents]
                     for n, carry in enumerate(linked):
