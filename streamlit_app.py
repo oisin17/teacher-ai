@@ -37,9 +37,9 @@ if refresh_lessons or getattr(persistence, "PERSISTENCE_VERSION", None) != 11:
     importlib.reload(persistence)
 from persistence import Store, StorageError
 import planning_quality
-if getattr(planning_quality, "QUALITY_MODULE_VERSION", None) != 8:
+if getattr(planning_quality, "QUALITY_MODULE_VERSION", None) != 9:
     importlib.reload(planning_quality)
-from planning_quality import quality_gate, QualityFailure
+from planning_quality import quality_gate, QualityFailure, protected_blocks
 import json
 from datetime import date, timedelta
 from lesson_progress import (
@@ -467,6 +467,7 @@ if page == "Today":
                     generation_format = copy.deepcopy(PLAN_FORMAT)
                     if generation_items:
                         generation_format['schema']['properties']['lessons']['items']['properties']['monthly_item_links']['items']['properties']['item_id']['enum'] = [i['item_id'] for i in generation_items]
+                    protected_times = [dict(time=f'{a//60:02}:{a%60:02}–{b//60:02}:{b%60:02}', name=name) for a,b,name in protected_blocks(quality_context)]
                     generation_started = perf_counter()
                     response = client.responses.create(
                         model="gpt-5.4-mini",
@@ -484,6 +485,7 @@ if page == "Today":
                             "3. Weekly Timetable\n"
                             "4. Yearly Plan if available\n\n"
 
+                            f"PROTECTED BLOCKS FOR THIS SELECTED DATE — use these EXACT clock ranges in the overview; all lessons fit between them: {protected_times}\n\n"
                             "IMPORTANT RULES:\n"
                             + ("- PROTECTED THURSDAY: external teacher Singing 14:00–14:30 is fixed, overrides uploaded timetable/monthly coverage, and must appear in the overview only. Do not derive Singing content from the Monthly Plan or add it to lesson progress. Finish ALL normal teaching by 14:00. Schedule pack-up/tidy-up 13:50–14:00 before Singing; school finishes at 14:30, with no second pack-up slot.\n" if singing_day(teacher_profile, planning_date.isoformat()) else "")
                             +
@@ -1181,3 +1183,4 @@ with st.expander("Saved data backup"):
             st.rerun()
         else:
             st.info("The database already contains saved data. Nothing has been overwritten.")
+

@@ -23,6 +23,7 @@ def review(findings=None, decisions=None):
 class QualityTests(unittest.TestCase):
     def test_code_checks_run_before_model_and_one_repair_limit(self):
         c=context();p=candidate(c);p['lessons'][0]['phases'][0]['minutes']=50
+        p['overview']=p['overview'].replace('09:30–10:00','09:30–10:10')
         client=Mock();client.responses.create.return_value=SimpleNamespace(output_text=json.dumps({k:p[k] for k in ('overview','lessons')}))
         with self.assertRaises(QualityFailure) as raised:quality_gate(p,c,client,{})
         self.assertEqual(raised.exception.report['state'],'Blocked');self.assertEqual(client.responses.create.call_count,1)
@@ -32,14 +33,16 @@ class QualityTests(unittest.TestCase):
 
     def test_repair_pass_and_metadata(self):
         c=context();p=candidate(c);fixed=copy.deepcopy(p);p['lessons'][0]['phases'][0]['minutes']=50
-        client=Mock();client.responses.create.side_effect=[SimpleNamespace(output_text=json.dumps({k:fixed[k] for k in ('overview','lessons')})),review()]
+        client=Mock();client.responses.create.side_effect=[SimpleNamespace(output_text=json.dumps({'lesson_0':dict(details=fixed['lessons'][0]['details'],activities=dict(phase_1='Recall rounding',phase_2='Model rounding',phase_3='Practise rounding',phase_4='Check and tidy'))})),review()]
         result=quality_gate(p,c,client,{})
+        self.assertEqual(result['planning_quality']['repair_kind'],'phase_budget')
         self.assertEqual(result['planning_quality']['state'],'Pass');self.assertEqual(result['planning_quality']['extra_ai_calls'],2)
         self.assertEqual(result['planning_quality']['revision_count'],1);self.assertEqual(result['planning_quality']['context_digest'],digest(c))
 
     def test_modest_repair_arithmetic_is_compiled_without_another_ai_attempt(self):
         c=context();p=candidate(c);fixed=copy.deepcopy(p)
         p['lessons'][0]['phases'][0]['minutes']=50
+        p['overview']=p['overview'].replace('09:30–10:00','09:30–10:10')
         fixed['lessons'][0]['phases'][1]['minutes'] += 5
         activities=[q['activity'] for q in fixed['lessons'][0]['phases']]
         client=Mock();client.responses.create.side_effect=[SimpleNamespace(output_text=json.dumps({k:fixed[k] for k in ('overview','lessons')})),review()]
@@ -55,6 +58,25 @@ class QualityTests(unittest.TestCase):
         c=context();p=candidate(c);p['lessons'][0]['phases'][0]['minutes']=50
         before=copy.deepcopy(p)
         self.assertEqual(allocate_repair_minutes(p),[]);self.assertEqual(p,before)
+
+    def test_short_slot_budget_is_exact_and_semantics_can_still_block(self):
+        c=context();p=candidate(c)
+        p['lessons'][0]['time']='09:30–09:45';p['overview']=p['overview'].replace('09:30–10:00','09:30–09:45')
+        before=copy.deepcopy(p);client=Mock()
+        patch={'lesson_0':dict(details='Board examples; support with number line; check one response.',activities=dict(phase_1='Recall known rounding',phase_2='Model and practise two examples',phase_3='Check response and tidy'))}
+        f=dict(code='invalid_scope',severity='Blocked',lesson_index=0,message='A remaining semantic blocker',evidence=p['lessons'][0]['topic'])
+        client.responses.create.side_effect=[SimpleNamespace(output_text=json.dumps(patch)),review([f])]
+        with self.assertRaises(QualityFailure) as raised:quality_gate(p,c,client,{})
+        self.assertEqual(raised.exception.report['state'],'Blocked')
+        self.assertEqual(raised.exception.report['phase_adjustments'][0]['after'],[3,9,3])
+        self.assertEqual(client.responses.create.call_count,2);self.assertEqual(p,before)
+
+    def test_invalid_timing_patch_preserves_input_and_does_not_retry(self):
+        c=context();p=candidate(c);p['lessons'][0]['phases'][0]['minutes']=90;before=copy.deepcopy(p)
+        client=Mock();client.responses.create.return_value=SimpleNamespace(output_text='{}')
+        with self.assertRaises(QualityFailure) as raised:quality_gate(p,c,client,{})
+        self.assertEqual(raised.exception.report['state'],'Unchecked')
+        self.assertEqual(client.responses.create.call_count,1);self.assertEqual(p,before)
 
     def test_first_pass_one_review_no_mutation(self):
         c=context();p=candidate(c);before=copy.deepcopy(c);client=Mock();client.responses.create.return_value=review()
@@ -158,3 +180,4 @@ class QualityTests(unittest.TestCase):
         self.assertIn('overview_overlap',{f['code'] for f in code_checks(p,c)})
         p=candidate(c);p['lessons'][0]['phases'][0]['minutes']=True
         self.assertIn('phase_duration',{f['code'] for f in code_checks(p,c)})
+
