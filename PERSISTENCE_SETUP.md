@@ -38,8 +38,9 @@ outcomes in the same PostgreSQL database; no additional service or secret is nee
   Unsaved form edits remain session/browser drafts; select the school date again
   after a new session. Historical whole-day records remain correctable through
   their original controls and are never converted using invented intentions.
-- Backup format 3 includes dated/pending Monthly Plans, day plans and lesson snapshots. Restore still accepts
-  formats 1 and 2, validates everything before writing, and refuses any nonempty store.
+- Backup format 4 also includes confirmed period reviews and carryover items, alongside
+  dated/pending Monthly Plans, day plans and lesson snapshots. Restore accepts formats
+  1, 2 and 3, validates everything before writing, and refuses any nonempty store.
 
 ## Setup
 
@@ -133,3 +134,14 @@ Schema initialization cache version is 4. The app reloads an imported legacy
 storage module if it lacks the dated-plan API before initializing storage.
 Old backups restore their generic Monthly Plan into a pending confirmation row;
 format 3 preserves confirmed dates and pending rows. No extra service is needed.
+
+
+## Month-transition carryover
+
+The additive `period_reviews` and `carryover_items` tables use the existing
+PostgreSQL connection and write lock. Reviews are confirmed once per Monthly
+Plan ID, with its dates/title preserved as provenance. Removed items are retained
+and restorable. Manual completion can be reopened. Linked lesson completion is
+derived from durable progress so correcting an outcome reopens unfinished work.
+A Completed lesson alone never completes carryover: the teacher must also select
+the item completion checkbox. Backup format 4 includes these records and links.

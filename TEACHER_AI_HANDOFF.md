@@ -460,9 +460,8 @@ Incorporate placement feedback and have the V1 ready by February 2027.
 ## 16. First task for a new Work session
 
 **Updated:** Priorities 1 and 2 are implemented. Inspect the current code and
-sections 18–20. Finish the live dated-monthly acceptance check once the owner
-confirms the existing plan dates and supplies the actual October document; then
-continue with Priority 3 (planning quality). The original
+sections 18–21. The owner confirmed September and October 2026 plans;
+month-transition carryover is implemented. Continue with Priority 3 (planning quality). The original
 persistence brief below is retained as acceptance context, not an outstanding task.
 
 Start by inspecting `streamlit_app.py` and the current persistence helpers.
@@ -673,12 +672,58 @@ Live September 30 and October 1 both correctly report no confirmed coverage; on
 October 1 the previous six-lesson day plan is retained and explicitly marked as
 predating recorded monthly sources. New generation is disabled, avoiding fallback.
 
-### Remaining live acceptance check
+### Confirmed dates and live boundary check — 2026-10-01
 
-The original document names September but has no explicit year and includes Irish
-fortnight date headings. Its dates are deliberately left unconfirmed for the owner.
-No genuine October plan has been supplied. Do not fabricate October coverage or
-confirm inferred dates as teacher-approved. The complete real-model two-month
-browser generation check requires the owner's confirmed September range and actual
-October upload/range. Automated boundary and upload-to-generation checks have passed;
-do not describe that remaining live confirmation/generation check as completed.
+The owner confirmed that the plans are for 2026 despite stale 2025 document
+headings. The migrated original document was retained without reupload and
+confirmed for September 1–30, 2026. The actual supplied October Word document
+was uploaded, its suggestions shown and dates explicitly confirmed for October
+1–31, 2026. Live September 30 selects September; October 1 selects October.
+Real October generation is covered in section 21.
+
+
+## 21. Month transition and carryover — 2026-10-01
+
+PR #4 adds a first-use review when a confirmed Monthly Plan follows an earlier
+confirmed period. AI suggests at most six specific unfinished items from recent
+prior-period Actual Progress and Current Learning. Suggestions remain drafts until
+the teacher confirms, edits/unchecks them, adds items manually, or chooses Nothing
+to carry over. The decision is stored once per Monthly Plan ID.
+
+Additive PostgreSQL tables `period_reviews` and `carryover_items` use the existing
+advisory write lock. No new infrastructure or credentials were added. Review and
+items save atomically; concurrent confirmation and stale monthly edits are guarded.
+Outstanding items supplement the new month coverage without requiring all of them
+on day one. Generated lessons retain stable `carryover_ids`; an explicit completion
+checkbox and Completed lesson status close an item. Partial/not-taught leaves it
+outstanding. Corrections rederive linked closures from durable lesson history.
+Manual Mark complete/Remove controls handle learning resolved elsewhere; Reopen
+and Restore make those manual actions reversible. Removal retains the record.
+Backup format 4 preserves reviews, items and linked progress; formats 1–3 remain
+compatible. Existing teacher context and whole-day history are unchanged.
+
+50 local automated checks pass, including review confirmation and date guards,
+concurrency, durable no-repeat reviews, mixed/linked outcomes, corrections, manual
+completion/reopening/removal/restoration, backup roundtrip and the original loop.
+Live acceptance results are recorded below.
+
+### Live acceptance
+
+The deployed October first-use review suggested exactly the unfinished English
+final activity and Gaeilge missed due to assembly, quoting the existing genuine
+September 30 notes. Both were confirmed and saved. Manual complete → reopen and
+remove → restore were exercised; both items ended outstanding. Refresh after
+redeployment preserved the confirmed review without prompting again. Real October
+generation restored from PostgreSQL and displayed explicit carryover completion
+checkboxes. An observed unsupported prior-task assumption prompted stricter final
+validation: identify an unknown missed task before linking; new-month topic alone
+is not evidence of addressing carryover. A code check also drops a completion
+link unless lesson details explicitly quote that confirmed item’s learning text;
+same-subject new learning alone cannot attach a completion control.
+
+The downloaded format-4 export matched the pre-rollout backup exactly for Teacher
+Profile, Planning Setup, Current Learning and Actual Progress. It included one
+period review and two outstanding items. No fictional teaching outcomes were
+saved. Full linked completion, partial/not-taught persistence and correction
+reopening are tested with isolated automated data; a genuine classroom lesson
+progress save remains teacher acceptance work.
