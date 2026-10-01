@@ -9,7 +9,7 @@ from timetable_constraints import interval, TIME_RANGE, singing_day
 from monthly_learning import planning_allowed, fingerprint
 
 RUBRIC_VERSION = 1
-QUALITY_MODULE_VERSION = 8
+QUALITY_MODULE_VERSION = 9
 CATEGORIES = ('alignment', 'progression', 'timetable', 'lesson_quality', 'practicality', 'specificity', 'usability')
 STATES = ('Pass', 'Revise', 'Blocked', 'Unchecked')
 HARD_CODES = ('unsupported_content', 'invalid_scope', 'unfinished_contradiction', 'completed_repetition', 'broad_completion', 'held_scope', 'unavailable_resource', 'missing_essential')
@@ -288,12 +288,67 @@ def allocate_repair_minutes(plan):
     return adjustments
 
 
+def repair_phase_budgets(plan, findings, context, client):
+    """One timing-only repair: immutable clock slots, code-owned minute budgets.
+
+    The model rewrites practical activities/details to fit the exact budgets;
+    it does not rescale the original oversized activities or move the timetable.
+    All item IDs, coverage and lesson intentions remain subject to semantic review.
+    """
+    indexes=sorted({f['lesson_index'] for f in findings})
+    properties={}; budgets={}; targets=[]
+    for n in indexes:
+        lesson=plan['lessons'][n]
+        start,end=interval(lesson['time']); duration=end-start
+        weights=[1,3,1] if duration <= 15 else [2,3,4,1]
+        if duration < len(weights):
+            weights=[1]*duration
+        shares=[duration*w/sum(weights) for w in weights]
+        minutes=[int(v) for v in shares]
+        for i in sorted(range(len(shares)),key=lambda i: (-(shares[i]-int(shares[i])),i))[:duration-sum(minutes)]:
+            minutes[i]+=1
+        key='lesson_'+str(n); budgets[key]=minutes
+        phase_keys=['phase_'+str(i+1) for i in range(len(minutes))]
+        properties[key]={'type':'object','additionalProperties':False,'properties':{
+            'details':{'type':'string'},'activities':{'type':'object','additionalProperties':False,
+                'properties':{k:{'type':'string'} for k in phase_keys},'required':phase_keys}},
+            'required':['details','activities']}
+        targets.append(dict(key=key,time=lesson['time'],subject=lesson['subject'],topic=lesson['topic'],
+            intention=lesson['learning_intention'],fixed_phase_minutes=dict(zip(phase_keys,minutes))))
+    format={'type':'json_schema','name':'planning_phase_repair','strict':True,'schema':{
+        'type':'object','additionalProperties':False,'properties':properties,'required':list(properties)}}
+    response=client.responses.create(model='gpt-5.4-mini',text={'format':format},input=
+        'Perform the ONE targeted timing repair for this day. Timetable, lesson identity, intentions and learning links are FIXED. '
+        'Code supplies exact phase minutes: return ONLY concise activity strings for each fixed phase plus revised resource/differentiation/CFU details. '
+        'Simplify and rewrite activities to FIT each budget; do not squeeze an oversized lesson unchanged into it. '
+        'First phase identifies/retrieves or introduces learning, middle phases model/practise as appropriate, final phase checks learning and tidies. '
+        'For unspecified prior tasks, identify the actual task briefly then resume it without inventing a new-month topic. '
+        'No timed Markdown phases in details. If the fixed intention/scope cannot be achieved, state the limitation truthfully; the recheck will block it. '
+        +REVIEW_RULES+'\nFIXED BUDGETS:\n'+json.dumps(targets,ensure_ascii=False)
+        +'\nEVIDENCE:\n'+json.dumps(review_context(context),ensure_ascii=False)
+        +'\nCANDIDATE:\n'+json.dumps(plan,ensure_ascii=False))
+    patches=json.loads(response.output_text)
+    if not isinstance(patches,dict) or set(patches)!=set(properties):
+        raise ValueError('Incomplete phase-budget repair')
+    adjustments=[]
+    for key,minutes in budgets.items():
+        n=int(key.split('_')[1]); patch=patches[key]; lesson=plan['lessons'][n]
+        expected=properties[key]['properties']['activities']['required']
+        if not isinstance(patch,dict) or set(patch)!={'details','activities'} or not isinstance(patch['details'],str) or not patch['details'].strip() or not isinstance(patch['activities'],dict) or set(patch['activities'])!=set(expected) or any(not isinstance(patch['activities'][k],str) or not patch['activities'][k].strip() for k in expected):
+            raise ValueError('Incomplete phase-budget activities')
+        before=[p.get('minutes') for p in lesson.get('phases',[]) if isinstance(p,dict)]
+        lesson['phases']=[dict(minutes=m,activity=patch['activities'][k]) for k,m in zip(expected,minutes)]
+        lesson['details']=patch['details']
+        adjustments.append(dict(lesson_index=n,time=lesson['time'],before=before,after=minutes))
+    return adjustments
+
+
 def quality_gate(plan, context, client, generation_format):
     """At most one repair. Only final passing candidates can reach storage."""
     from lesson_progress import parse_generated_plan
     plan=copy.deepcopy(plan);plan.pop('planning_quality',None)
     carryover_references(plan,context)
-    start=time.perf_counter(); calls=0; revisions=0; initial=[]; minute_adjustments=[]
+    start=time.perf_counter(); calls=0; revisions=0; initial=[]; minute_adjustments=[]; repair_kind=None
     from types import SimpleNamespace
     real_client=client
     def create(**kwargs):
@@ -306,16 +361,21 @@ def quality_gate(plan, context, client, generation_format):
         initial=copy.deepcopy(report['findings'])
         if report['state'] != 'Pass':
             revisions=1
-            response=client.responses.create(model='gpt-5.4-mini',text={'format':generation_format},
-                input='Repair this daily plan ONLY to resolve the listed material findings. Preserve correct teaching and protected routines. Use exact source-backed content; never alter learning outcomes. Return the whole corrected plan, not review JSON. For EVERY linked carryover ID, include a Carryover reference line in details quoting its learning text from EVIDENCE VERBATIM (including punctuation); phases must identify and resume that actual prior task. Do not substitute a new-month topic for an unknown prior task. Each lesson needs phases [{minutes: positive integer, activity: concise description}]; phase totals equal clock duration, including setup and tidy-up. Do not duplicate phases in details. '+REVIEW_RULES+'\nTIMING CHECK: Keep each lesson time identical to its overview row. First compute end minus start; then allocate positive whole phase minutes summing to that exact number. Do not lengthen a lesson into protected blocks to fit activities.\nEVIDENCE:\n'+json.dumps(review_context(context),ensure_ascii=False)+'\nFINDINGS:\n'+json.dumps(report['findings'],ensure_ascii=False)+'\nCANDIDATE:\n'+json.dumps(plan,ensure_ascii=False))
-            plan=parse_generated_plan(response.output_text,context['planning_date'])
-            plan['monthly_plan']={k:context['monthly_plan'][k] for k in ('id','title','start_date','end_date')}
-            minute_adjustments=allocate_repair_minutes(plan)
+            if all(f['code']=='phase_duration' and f['lesson_index']>=0 for f in report['findings']):
+                repair_kind='phase_budget'
+                minute_adjustments=repair_phase_budgets(plan,report['findings'],context,client)
+            else:
+                repair_kind='whole_plan'
+                response=client.responses.create(model='gpt-5.4-mini',text={'format':generation_format},
+                    input='Repair this daily plan ONLY to resolve the listed material findings. Preserve correct teaching and protected routines. Use exact source-backed content; never alter learning outcomes. Return the whole corrected plan, not review JSON. For EVERY linked carryover ID, include a Carryover reference line in details quoting its learning text from EVIDENCE VERBATIM (including punctuation); phases must identify and resume that actual prior task. Do not substitute a new-month topic for an unknown prior task. Each lesson needs phases [{minutes: positive integer, activity: concise description}]; phase totals equal clock duration, including setup and tidy-up. Do not duplicate phases in details. '+REVIEW_RULES+'\nTIMING CHECK: Keep each lesson time identical to its overview row. First compute end minus start; then allocate positive whole phase minutes summing to that exact number. Do not lengthen a lesson into protected blocks to fit activities.\nEVIDENCE:\n'+json.dumps(review_context(context),ensure_ascii=False)+'\nPROTECTED BLOCKS FOR THIS DATE (EXACT):\n'+json.dumps([dict(time=f'{a//60:02}:{a%60:02}–{b//60:02}:{b%60:02}',name=name) for a,b,name in protected_blocks(context)],ensure_ascii=False)+'\nFINDINGS:\n'+json.dumps(report['findings'],ensure_ascii=False)+'\nCANDIDATE:\n'+json.dumps(plan,ensure_ascii=False))
+                plan=parse_generated_plan(response.output_text,context['planning_date'])
+                plan['monthly_plan']={k:context['monthly_plan'][k] for k in ('id','title','start_date','end_date')}
+                minute_adjustments=allocate_repair_minutes(plan)
             carryover_references(plan,context)
             report,used=evaluate_candidate(plan,context,client)
         metadata={'version':RUBRIC_VERSION,'state':report['state'],'revision_count':revisions,'extra_ai_calls':calls,
             'latency_seconds':round(time.perf_counter()-start,2),'initial_findings':initial,'findings':report['findings'],
-            'carryover_decisions':report['carryover_decisions'],'checked_categories':report.get('checked_categories',[]),'context_digest':digest(context),'phase_adjustments':minute_adjustments}
+            'carryover_decisions':report['carryover_decisions'],'checked_categories':report.get('checked_categories',[]),'context_digest':digest(context),'phase_adjustments':minute_adjustments,'repair_kind':repair_kind}
         if report['state'] != 'Pass':
             raise QualityFailure('The new plan still fails planning checks: '+report['findings'][0]['message']+' Your previous saved plan is unchanged.',metadata)
         plan['planning_quality']=metadata
@@ -325,3 +385,4 @@ def quality_gate(plan, context, client, generation_format):
     except Exception as e:
         raise QualityFailure('Planning checks could not be completed. Your previous saved plan is unchanged.',
             {'version':RUBRIC_VERSION,'state':'Unchecked','revision_count':revisions,'extra_ai_calls':calls,'latency_seconds':round(time.perf_counter()-start,2),'findings':initial,'failure_reason':str(e) if isinstance(e,ValueError) else type(e).__name__}) from e
+

@@ -96,6 +96,7 @@ class AppTests(unittest.TestCase):
         previous=sample_plan('2026-10-01');self.store.save_day_plan(previous)
         before=self.store.export_backup()
         output=json.loads(generation_output());output['lessons'][0]['phases'][0]['minutes']=90
+        output['overview']=output['overview'].replace('09:30–10:00','09:30–10:10')
         self.client.responses.create.return_value=SimpleNamespace(output_text=json.dumps(output))
         app=self.new_app();app.date_input[0].set_value(date(2026,10,1)).run()
         self.button(app, "✨ Generate Today's Plan").click().run()
@@ -475,3 +476,4 @@ class AppTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
