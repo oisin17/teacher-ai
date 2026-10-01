@@ -37,6 +37,25 @@ class QualityTests(unittest.TestCase):
         self.assertEqual(result['planning_quality']['state'],'Pass');self.assertEqual(result['planning_quality']['extra_ai_calls'],2)
         self.assertEqual(result['planning_quality']['revision_count'],1);self.assertEqual(result['planning_quality']['context_digest'],digest(c))
 
+    def test_modest_repair_arithmetic_is_compiled_without_another_ai_attempt(self):
+        c=context();p=candidate(c);fixed=copy.deepcopy(p)
+        p['lessons'][0]['phases'][0]['minutes']=50
+        fixed['lessons'][0]['phases'][1]['minutes'] += 5
+        activities=[q['activity'] for q in fixed['lessons'][0]['phases']]
+        client=Mock();client.responses.create.side_effect=[SimpleNamespace(output_text=json.dumps({k:fixed[k] for k in ('overview','lessons')})),review()]
+        result=quality_gate(p,c,client,{})
+        self.assertEqual(sum(q['minutes'] for q in result['lessons'][0]['phases']),30)
+        self.assertEqual([q['activity'] for q in result['lessons'][0]['phases']],activities)
+        self.assertEqual(result['planning_quality']['revision_count'],1)
+        self.assertEqual(client.responses.create.call_count,2)
+        self.assertEqual(len(result['planning_quality']['phase_adjustments']),1)
+
+    def test_large_timing_discrepancies_are_not_compiled(self):
+        from planning_quality import allocate_repair_minutes
+        c=context();p=candidate(c);p['lessons'][0]['phases'][0]['minutes']=50
+        before=copy.deepcopy(p)
+        self.assertEqual(allocate_repair_minutes(p),[]);self.assertEqual(p,before)
+
     def test_first_pass_one_review_no_mutation(self):
         c=context();p=candidate(c);before=copy.deepcopy(c);client=Mock();client.responses.create.return_value=review()
         result=quality_gate(p,c,client,{})

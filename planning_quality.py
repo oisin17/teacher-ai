@@ -9,7 +9,7 @@ from timetable_constraints import interval, TIME_RANGE, singing_day
 from monthly_learning import planning_allowed, fingerprint
 
 RUBRIC_VERSION = 1
-QUALITY_MODULE_VERSION = 3
+QUALITY_MODULE_VERSION = 4
 CATEGORIES = ('alignment', 'progression', 'timetable', 'lesson_quality', 'practicality', 'specificity', 'usability')
 STATES = ('Pass', 'Revise', 'Blocked', 'Unchecked')
 HARD_CODES = ('unsupported_content', 'invalid_scope', 'unfinished_contradiction', 'completed_repetition', 'broad_completion', 'held_scope', 'unavailable_resource', 'missing_essential')
@@ -186,11 +186,43 @@ def evaluate_candidate(plan, context, client):
     return report,1
 
 
+def allocate_repair_minutes(plan):
+    """Compile modest arithmetic discrepancies inside the one repair attempt.
+
+    Never move clock slots or change activities. Larger discrepancies are left
+    for blocking; the semantic recheck still evaluates practical phase delivery.
+    """
+    adjustments = []
+    for n, lesson in enumerate(plan['lessons']):
+        start, end = interval(lesson['time'])
+        budget = end-start
+        phases = lesson.get('phases', [])
+        if not phases or any(type(p.get('minutes')) is not int or p['minutes'] <= 0 for p in phases):
+            continue
+        before = [p['minutes'] for p in phases]
+        total = sum(before)
+        if total == budget or budget < len(phases) or abs(total-budget) > budget/4:
+            continue
+        # Keep every phase >=1 minute, then distribute remaining minutes using
+        # largest remainders. Stable ties preserve the generated phase order.
+        weights = [m-1 for m in before]
+        if not sum(weights):
+            continue
+        shares = [(budget-len(phases))*w/sum(weights) for w in weights]
+        after = [1+int(v) for v in shares]
+        for i in sorted(range(len(shares)), key=lambda i: (-(shares[i]-int(shares[i])),i))[:budget-sum(after)]:
+            after[i] += 1
+        for phase, minutes in zip(phases,after):
+            phase['minutes'] = minutes
+        adjustments.append(dict(lesson_index=n, time=lesson['time'], before=before, after=after))
+    return adjustments
+
+
 def quality_gate(plan, context, client, generation_format):
     """At most one repair. Only final passing candidates can reach storage."""
     from lesson_progress import parse_generated_plan
     plan=copy.deepcopy(plan);plan.pop('planning_quality',None)
-    start=time.perf_counter(); calls=0; revisions=0; initial=[]
+    start=time.perf_counter(); calls=0; revisions=0; initial=[]; minute_adjustments=[]
     from types import SimpleNamespace
     real_client=client
     def create(**kwargs):
@@ -207,10 +239,11 @@ def quality_gate(plan, context, client, generation_format):
                 input='Repair this daily plan ONLY to resolve the listed material findings. Preserve correct teaching and protected routines. Use exact source-backed content; never alter learning outcomes. Return the whole corrected plan. Each lesson needs phases [{minutes: positive integer, activity: concise description}]; phase totals equal clock duration, including setup and tidy-up. Do not duplicate phases in details. '+REVIEW_RULES+'\nTIMING CHECK: Keep each lesson time identical to its overview row. First compute end minus start; then allocate positive whole phase minutes summing to that exact number. Do not lengthen a lesson into protected blocks to fit activities.\nEVIDENCE:\n'+json.dumps(review_context(context),ensure_ascii=False)+'\nFINDINGS:\n'+json.dumps(report['findings'],ensure_ascii=False)+'\nCANDIDATE:\n'+json.dumps(plan,ensure_ascii=False))
             plan=parse_generated_plan(response.output_text,context['planning_date'])
             plan['monthly_plan']={k:context['monthly_plan'][k] for k in ('id','title','start_date','end_date')}
+            minute_adjustments=allocate_repair_minutes(plan)
             report,used=evaluate_candidate(plan,context,client)
         metadata={'version':RUBRIC_VERSION,'state':report['state'],'revision_count':revisions,'extra_ai_calls':calls,
             'latency_seconds':round(time.perf_counter()-start,2),'initial_findings':initial,'findings':report['findings'],
-            'carryover_decisions':report['carryover_decisions'],'checked_categories':report.get('checked_categories',[]),'context_digest':digest(context)}
+            'carryover_decisions':report['carryover_decisions'],'checked_categories':report.get('checked_categories',[]),'context_digest':digest(context),'phase_adjustments':minute_adjustments}
         if report['state'] != 'Pass':
             raise QualityFailure('The new plan still fails planning checks: '+report['findings'][0]['message']+' Your previous saved plan is unchanged.',metadata)
         plan['planning_quality']=metadata
