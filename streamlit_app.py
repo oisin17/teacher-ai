@@ -37,7 +37,7 @@ if refresh_lessons or getattr(persistence, "PERSISTENCE_VERSION", None) != 11:
     importlib.reload(persistence)
 from persistence import Store, StorageError
 import planning_quality
-if getattr(planning_quality, "QUALITY_MODULE_VERSION", None) != 9:
+if getattr(planning_quality, "QUALITY_MODULE_VERSION", None) != 10:
     importlib.reload(planning_quality)
 from planning_quality import quality_gate, QualityFailure, protected_blocks
 import json
