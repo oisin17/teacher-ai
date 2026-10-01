@@ -452,7 +452,7 @@ class Store(LearningStore):
         updated = project_learning_position(existing, Store._history(connection))
         from lesson_progress import subject_bucket
         for item in Store._learning(connection):
-            if item['status'] != 'Not started':
+            if not item['archived'] and item['status'] != 'Not started':
                 key = subject_bucket(item['subject'])
                 if MARKER not in updated.get(key, ''):
                     updated[key] = updated.get(key, '') + MARKER

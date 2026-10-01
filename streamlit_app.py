@@ -5,7 +5,7 @@ import hashlib
 from uuid import uuid4
 from monthly_plans import suggest_dates
 from monthly_learning_ui import review_items, item_inputs, suggest_outcomes
-from monthly_learning import MARKER
+from monthly_learning import MARKER, fingerprint
 import importlib
 import timetable_constraints
 if getattr(timetable_constraints, "CONSTRAINT_VERSION", None) != 2:
@@ -427,7 +427,7 @@ if page == "Today":
             with st.spinner("Teacher AI is planning your day..."):
                 try:
                     learning_items = storage_call(store.list_learning_items, None, planning_date.isoformat())
-                    current_items = [i for i in learning_items if not i["archived"] and (i["monthly_plan_id"] == selected_monthly["id"] or i["id"] in {c.get("monthly_item_id") for c in outstanding_carryover})]
+                    current_items = [i for i in learning_items if not i["archived"] and ((i["monthly_plan_id"] == selected_monthly["id"] and i["fingerprint"] == fingerprint(selected_monthly["plan_text"])) or i["id"] in {c.get("monthly_item_id") for c in outstanding_carryover})]
                     recent_progress = load_recent_progress()
                     current_learning_position = load_current_learning_position()
                     st.session_state["current_learning_position"] = current_learning_position

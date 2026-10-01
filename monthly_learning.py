@@ -114,6 +114,8 @@ class LearningStore:
                             carry['state'] = 'removed'
                         connection.execute('UPDATE carryover_items SET item_data = %s WHERE id = %s', (json.dumps(carry), carry['id']))
 
+            self._project_position(connection)
+
     def correct_learning_item(self, item_id, status, remaining, evidence, confirmed):
         from persistence import StorageError
         from datetime import date
