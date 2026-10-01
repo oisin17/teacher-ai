@@ -8,10 +8,14 @@ from carryover import SUGGESTION_FORMAT
 from pypdf import PdfReader
 from docx import Document
 import importlib
+import lesson_progress
+refresh_lessons = "carryover_ids" not in lesson_progress.PLAN_FORMAT["schema"]["properties"]["lessons"]["items"]["properties"]
+if refresh_lessons:
+    importlib.reload(lesson_progress)
 import persistence
 # Streamlit hot reload can retain the previous imported storage module.
 # Reload only when that cached module lacks this rollout's additive API.
-if not hasattr(persistence.Store, "carryover_context"):
+if refresh_lessons or not hasattr(persistence.Store, "carryover_context"):
     importlib.reload(persistence)
 from persistence import Store, StorageError
 import json
@@ -324,6 +328,8 @@ st.divider()
 if page == "Today":
 
     st.header("Today's Plan")
+    if st.session_state.pop("lesson_progress_saved", False):
+        st.success("Lesson progress saved and Current Learning Position updated.")
     st.write(
         "Your teaching day will appear here based on your timetable, "
         "plans and actual classroom progress."
@@ -524,7 +530,8 @@ if page == "Today":
                     position = storage_call(store.save_lesson_progress, planning_date.isoformat(),
                                             saved_plan["plan_id"], outcomes)
                     st.session_state["current_learning_position"] = position
-                    st.success("Lesson progress saved and Current Learning Position updated.")
+                    st.session_state["lesson_progress_saved"] = True
+                    st.rerun()
     elif day_state["progress"]:
         st.info("This date has a historical whole-day record. Review or correct it in Progress History.")
     else:
