@@ -793,4 +793,4 @@ Backup format 5 includes item definitions and updates; formats 1–4 remain supp
 Restore validates references, remaps restored progress IDs and refuses nonempty stores.
 No new infrastructure, credentials, authentication or paid service was added.
 
-Live acceptance and final test results will be appended after deployment verification.
+Live extraction initially rejected AI-reproduced source quotations. Extraction now uses numbered original document lines: AI selects the line index, and the app copies its text verbatim. Live acceptance and final test results will be appended after deployment verification.

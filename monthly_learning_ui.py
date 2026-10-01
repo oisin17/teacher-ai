@@ -6,21 +6,33 @@ from monthly_learning import TYPES, STATUSES, fingerprint
 
 
 def extract_items(client, monthly):
-    response = client.responses.create(model='gpt-5.4-mini', input=(
+    # AI chooses a source line; the app copies that line verbatim. This avoids
+    # hallucinated quotations and fragile punctuation/whitespace reproduction.
+    lines = [line for line in monthly['plan_text'].splitlines() if line.strip()]
+    schema = {'type': 'json_schema', 'name': 'monthly_learning_suggestions', 'strict': True,
+        'schema': {'type': 'object', 'additionalProperties': False,
+            'properties': {'items': {'type': 'array', 'items': {'type': 'object', 'additionalProperties': False,
+                'properties': {'subject': {'type': 'string'}, 'description': {'type': 'string'},
+                    'type': {'type': 'string', 'enum': list(TYPES)}, 'source_index': {'type': 'integer'}},
+                'required': ['subject', 'description', 'type', 'source_index']}}}, 'required': ['items']}}
+    response = client.responses.create(model='gpt-5.4-mini', text={'format': schema}, input=(
         'Extract distinct independently trackable learning items from this monthly plan. Preserve actual subject names. '
         'Deduplicate matching objectives and activities; separate independently teachable aspects. '
         'Use type discrete for a finite task, recurring for repeated practice, broad for ongoing objectives. '
-        'Do not infer past progress. Include source as an EXACT contiguous quotation from the document. '
-        'Return JSON only: {"items":[{"subject":"History","description":"...","type":"discrete","source":"exact quote"}]}. '
-        'Keep descriptions concise; cover all subjects. No invented pages or tasks.\n' + monthly['plan_text']))
+        'Do not infer past progress. Set source_index to the numbered original document line that explicitly supports this item. '
+        'Keep descriptions concise; cover all subjects. No invented pages or tasks.\n' +
+        '\n'.join(f'{n}: {line}' for n, line in enumerate(lines))))
     items = json.loads(response.output_text)['items']
     if not isinstance(items, list) or not 1 <= len(items) <= 250:
         raise ValueError('Invalid extraction')
     result = []
     for i in items:
-        if i['source'] not in monthly['plan_text'] or i['type'] not in TYPES:
+        index = i['source_index']
+        if not isinstance(index, int) or not 0 <= index < len(lines) or i['type'] not in TYPES:
             raise ValueError('Unverifiable source')
-        result.append({**i, 'id': uuid4().hex, 'monthly_plan_id': monthly['id'], 'fingerprint': fingerprint(monthly['plan_text']), 'archived': False})
+        result.append({k: v for k, v in i.items() if k != 'source_index'} | {
+            'source': lines[index], 'id': uuid4().hex, 'monthly_plan_id': monthly['id'],
+            'fingerprint': fingerprint(monthly['plan_text']), 'archived': False})
     return result
 
 

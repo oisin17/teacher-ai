@@ -76,7 +76,7 @@ class AppTests(unittest.TestCase):
 
     def test_item_review_extract_save_merge_and_restore(self):
         import json
-        self.client.responses.create.return_value = SimpleNamespace(output_text=json.dumps({'items': [dict(subject='History', description='Activity one', type='discrete', source='English narrative.'), dict(subject='History', description='Activity two', type='broad', source='English narrative.')]}))
+        self.client.responses.create.return_value = SimpleNamespace(output_text=json.dumps({'items': [dict(subject='History', description='Activity one', type='discrete', source_index=0), dict(subject='History', description='Activity two', type='broad', source_index=0)]}))
         app = self.new_app()
         self.navigate(app, 'Planning Setup')
         next(i for i in app.selectbox if i.label == 'Monthly Plan to add or edit').set_value('9').run()
