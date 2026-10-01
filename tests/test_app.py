@@ -39,6 +39,16 @@ class AppTests(unittest.TestCase):
         self.store.save_period_review(october, "2026-10-01", [], True)
         self.store.save_document("current_learning_position", {"Maths": "Addition completed"})
         self.client = Mock()
+        def model_response(**kwargs):
+            if kwargs['text']['format']['name'] == 'planning_quality_review':
+                import json
+                from planning_quality import CATEGORIES
+                context=json.loads(kwargs['input'].split('\nEVIDENCE:\n',1)[1].split('\nCANDIDATE:\n',1)[0])
+                plan=json.loads(kwargs['input'].split('\nCANDIDATE:\n',1)[1])
+                linked={id for l in plan['lessons'] for id in l.get('carryover_ids',[])}
+                return SimpleNamespace(output_text=json.dumps(dict(checked_categories=list(CATEGORIES),findings=[],carryover_decisions=[dict(id=c['id'],decision='addressed' if c['id'] in linked else 'deferred',reason='Appropriate next subject slot after fixed routines') for c in context['carryover'] if c['state']=='outstanding'])))
+            return self.client.responses.create.return_value
+        self.client.responses.create.side_effect=model_response
         self.ai_patch = patch("openai.OpenAI", return_value=self.client)
         self.ai_patch.start()
         st.cache_resource.clear()
@@ -73,6 +83,30 @@ class AppTests(unittest.TestCase):
         self.assertEqual(len(app.exception), 0)
         self.assertEqual(len(app.error), 0)
         return app
+
+    def test_rubric_bad_candidate_keeps_previous_and_all_learning(self):
+        import json
+        previous=sample_plan('2026-10-01');self.store.save_day_plan(previous)
+        before=self.store.export_backup()
+        output=json.loads(generation_output());output['lessons'][0]['phases'][0]['minutes']=90
+        self.client.responses.create.return_value=SimpleNamespace(output_text=json.dumps(output))
+        app=self.new_app();app.date_input[0].set_value(date(2026,10,1)).run()
+        self.button(app, "✨ Generate Today's Plan").click().run()
+        self.assertEqual(len(app.error),1)
+        self.assertEqual(app.session_state['last_planning_check']['state'],'Blocked')
+        self.assertEqual(self.store.export_backup(),before)
+        self.assertEqual(self.client.responses.create.call_count,2) # generation + one repair; no review before code passes
+
+    def test_read_only_browser_probe_does_not_save_candidate(self):
+        self.store.save_document('teacher_profile',{'class_level':'5th Class','recurring_arrangements':'Daily\n11:00–11:15 Yard'})
+        self.store.save_day_plan(sample_plan('2026-10-01'))
+        self.client.responses.create.return_value=SimpleNamespace(output_text=generation_output())
+        app=self.new_app();app.query_params['rubric_probe']='read-only';app.date_input[0].set_value(date(2026,10,1)).run()
+        before=self.store.export_backup()
+        self.button(app,'Test conflicting candidate without saving').click().run()
+        self.assertEqual(len(app.exception),0)
+        self.assertEqual(self.store.export_backup(),before)
+        self.assertTrue(any('Previous saved plan unchanged: True' in m.value for m in app.markdown))
 
     def test_item_review_extract_save_merge_and_restore(self):
         import json
@@ -109,7 +143,7 @@ class AppTests(unittest.TestCase):
         self.button(app, 'Mark all completed').click().run()
         next(i for i in app.text_input if i.label == 'English — Narrative openings note (optional)').set_value('Whole opening paragraph finished')
         lesson = self.store.load_day('2026-09-30')['plan']['lessons'][1]
-        item_schema = self.client.responses.create.call_args.kwargs['text']['format']['schema']['properties']['lessons']['items']['properties']['monthly_item_links']['items']['properties']['item_id']
+        item_schema = self.client.responses.create.call_args_list[0].kwargs['text']['format']['schema']['properties']['lessons']['items']['properties']['monthly_item_links']['items']['properties']['item_id']
         self.assertEqual(item_schema['enum'], ['test-item'])
         self.client.responses.create.return_value = SimpleNamespace(output_text=json.dumps({'updates':[dict(lesson_id=lesson['lesson_id'], item_id='test-item', status='Completed', remaining='', evidence='Whole opening paragraph finished')]}))
         self.button(app, 'Suggest item outcomes from notes').click().run()
@@ -161,10 +195,10 @@ class AppTests(unittest.TestCase):
         self.button(app, "✨ Generate Today's Plan").click().run()
         self.assertEqual(len(app.error), 1)
         self.assertEqual(self.store.load_day("2026-10-01")["plan"], previous)
-        self.assertIn("PROTECTED THURSDAY", self.client.responses.create.call_args.kwargs["input"])
+        self.assertIn("PROTECTED THURSDAY", self.client.responses.create.call_args_list[0].kwargs["input"])
         output = json.loads(generation_output())
         output["lessons"] = [l for l in output["lessons"] if l["time"] < "13:00"]
-        output["overview"] = "13:50–14:00 Pack up / tidy up\n14:00–14:30 Singing — external teacher"
+        output["overview"] = "09:30–10:00 Maths\n11:15–11:55 English\n13:50–14:00 Pack up / tidy up\n14:00–14:30 Singing — external teacher"
         self.client.responses.create.return_value = SimpleNamespace(output_text=json.dumps(output))
         self.button(app, "✨ Generate Today's Plan").click().run()
         self.assertEqual(len(app.error), 0)
@@ -306,7 +340,7 @@ class AppTests(unittest.TestCase):
         self.assertIn("assembly", updated["Gaeilge"])
         self.assertEqual(len(self.store.load_progress_history()[0]["lessons"]), 3)
         # Saving requires no second AI call: recorded learning commits with progress.
-        self.assertEqual(self.client.responses.create.call_count, 1)
+        self.assertEqual(self.client.responses.create.call_count, 2)
 
         fresh = self.new_app()
         fresh.date_input[0].set_value(date(2026, 9, 30)).run()

@@ -28,7 +28,7 @@ DOCUMENTS = {
     "current_learning_position": "position_data",
 }
 LOCK_ID = 73190421
-PERSISTENCE_VERSION = 10
+PERSISTENCE_VERSION = 11
 
 
 from monthly_learning import LearningStore, validate_item as validate_learning_item, validate_update, MARKER, planning_allowed, display_wording
@@ -422,6 +422,22 @@ class Store(LearningStore):
                     plan["monthly_plan"] = progress["monthly_plan"]
         return {"plan": plan, "progress": progress}
 
+    def _quality_context(self, connection, planning_date):
+        documents = {}
+        for name, column in DOCUMENTS.items():
+            row = connection.execute(f"SELECT {column} FROM {name} WHERE id = 1").fetchone()
+            documents[name] = json.loads(row[0]) if row else {}
+        monthly = next((m for m in self._monthly(connection) if m.get('start_date') and m['start_date'] <= planning_date <= m['end_date']), None)
+        return dict(planning_date=planning_date, monthly_plan=monthly,
+                    learning_items=self._learning(connection, planning_date),
+                    carryover=self._carryover(connection, planning_date),
+                    recent_progress=sorted([r for r in self._history(connection) if r['planning_date'] <= planning_date], key=lambda r: (r['planning_date'], r['id']), reverse=True)[:10], **documents)
+
+    def planning_quality_context(self, planning_date):
+        with self._connection() as connection:
+            self._lock(connection)
+            return self._quality_context(connection, planning_date)
+
     def save_day_plan(self, plan):
         try:
             validate_plan(plan)
@@ -432,6 +448,12 @@ class Store(LearningStore):
             if connection.execute("SELECT id FROM actual_progress WHERE planning_date = %s LIMIT 1",
                                   (plan["planning_date"],)).fetchone():
                 raise StorageError("Progress already exists for this date. Review or correct it in Progress History.")
+            if 'planning_quality' in plan:
+                from planning_quality import code_checks, digest
+                quality = plan['planning_quality']
+                context = self._quality_context(connection, plan['planning_date'])
+                if quality.get('state') != 'Pass' or quality.get('context_digest') != digest(context) or code_checks(plan, context):
+                    raise StorageError('Planning evidence changed or checks failed. Your previous saved plan is unchanged; generate with the latest evidence.')
             items = {i['id']: i for i in self._learning(connection, plan['planning_date']) if planning_allowed(i)}
             allowed_periods = {plan.get('monthly_plan', {}).get('id')}
             allowed_ids = {i.get('monthly_item_id') for i in self._carryover(connection, plan['planning_date']) if i['state'] == 'outstanding'}

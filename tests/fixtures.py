@@ -4,8 +4,8 @@ from lesson_progress import parse_generated_plan
 
 
 def generation_output():
-    return json.dumps({
-        "overview": "08:50 Morning work; 10:45 Lunch; 14:30 Finish",
+    output = {
+        "overview": "09:30–10:00 Maths\n11:15–11:55 English\n13:20–13:50 Gaeilge",
         "lessons": [
             {"time": "09:30–10:00", "subject": "Maths", "topic": "Rounding to 1000",
              "learning_intention": "Round five-digit numbers to the nearest 1000.",
@@ -17,7 +17,12 @@ def generation_output():
              "learning_intention": "Ask and answer three questions about yourself.",
              "details": "Model three questions and practise in pairs."},
         ],
-    })
+    }
+    for l in output['lessons']:
+        from timetable_constraints import interval
+        start,end = interval(l['time'])
+        l['phases'] = [dict(minutes=5, activity='Model the task'),dict(minutes=end-start-10,activity='Practise the learning'),dict(minutes=5,activity='Check understanding and tidy up')]
+    return json.dumps(output)
 
 
 def sample_plan(day="2026-09-30"):

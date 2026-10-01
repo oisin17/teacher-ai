@@ -3,6 +3,7 @@ from openai import OpenAI
 import io
 import copy
 import hashlib
+from time import perf_counter
 from uuid import uuid4
 from monthly_plans import suggest_dates
 import importlib
@@ -26,15 +27,16 @@ from carryover import SUGGESTION_FORMAT, retain_explicit_links
 from pypdf import PdfReader
 from docx import Document
 import lesson_progress
-refresh_lessons = "monthly_item_links" not in lesson_progress.PLAN_FORMAT["schema"]["properties"]["lessons"]["items"]["properties"]
+refresh_lessons = "phases" not in lesson_progress.PLAN_FORMAT["schema"]["properties"]["lessons"]["items"]["properties"]
 if refresh_lessons:
     importlib.reload(lesson_progress)
 import persistence
 # Streamlit hot reload can retain the previous imported storage module.
 # Reload only when that cached module lacks this rollout's additive API.
-if refresh_lessons or getattr(persistence, "PERSISTENCE_VERSION", None) != 10:
+if refresh_lessons or getattr(persistence, "PERSISTENCE_VERSION", None) != 11:
     importlib.reload(persistence)
 from persistence import Store, StorageError
+from planning_quality import quality_gate, QualityFailure
 import json
 from datetime import date, timedelta
 from lesson_progress import (
@@ -418,6 +420,10 @@ if page == "Today":
     day_state = storage_call(store.load_day, planning_date.isoformat())
     if day_state["progress"]:
         st.caption("Progress is already saved for this date. You can update it below or in Progress History.")
+    if st.query_params.get('rubric_probe') == 'read-only':
+        from rubric_diagnostics import render_probe
+        render_probe(store, planning_date.isoformat(), client)
+        st.stop()
     if st.button("✨ Generate Today's Plan", type="primary", disabled=day_state["progress"] is not None or selected_monthly is None or needs_review):
 
         teacher_profile = load_teacher_profile()
@@ -439,17 +445,26 @@ if page == "Today":
         else:
             with st.spinner("Teacher AI is planning your day..."):
                 try:
-                    learning_items = storage_call(store.list_learning_items, None, planning_date.isoformat())
+                    quality_context = storage_call(store.planning_quality_context, planning_date.isoformat())
+                    teacher_profile = quality_context['teacher_profile']
+                    selected_monthly = quality_context['monthly_plan']
+                    planning_setup = quality_context['planning_setup']
+                    timetable_text = planning_setup.get('timetable_text', '')
+                    monthly_plan_text = selected_monthly['plan_text']
+                    yearly_plan_text = planning_setup.get('yearly_plan_text', '')
+                    outstanding_carryover = [c for c in quality_context['carryover'] if c['state'] == 'outstanding']
+                    learning_items = quality_context['learning_items']
                     current_items = [i for i in learning_items if planning_allowed(i) and ((i["monthly_plan_id"] == selected_monthly["id"] and i["fingerprint"] == fingerprint(selected_monthly["plan_text"])) or i["id"] in {c.get("monthly_item_id") for c in outstanding_carryover})]
                     generation_items = [{"item_id": i["id"], **{k: i[k] for k in ("subject", "type", "status", "remaining", "evidence")}, "description": display_wording(i)} for i in current_items]
                     held_items = [display_wording(i) for i in learning_items if i["monthly_plan_id"] == selected_monthly["id"] and not i["archived"] and i.get("requires_clarification")]
-                    recent_progress = load_recent_progress()
-                    current_learning_position = load_current_learning_position()
+                    recent_progress = quality_context['recent_progress']
+                    current_learning_position = quality_context['current_learning_position']
                     st.session_state["current_learning_position"] = current_learning_position
 
                     generation_format = copy.deepcopy(PLAN_FORMAT)
                     if generation_items:
                         generation_format['schema']['properties']['lessons']['items']['properties']['monthly_item_links']['items']['properties']['item_id']['enum'] = [i['item_id'] for i in generation_items]
+                    generation_started = perf_counter()
                     response = client.responses.create(
                         model="gpt-5.4-mini",
                         text={"format": generation_format},
@@ -518,7 +533,7 @@ if page == "Today":
                             "- Subject and topic\n"
                             "- Learning intention\n"
                             "- Resources\n"
-                            "- A small number of timed lesson phases\n"
+                            "- phases: a small array of {minutes: positive integer, activity: concise pupil/teacher action}. Total minutes equal the lesson clock duration, including setup and tidy-up.\n"
                             "- Brief differentiation\n"
                             "- Brief assessment/check for understanding\n"
                             "- Early finisher where appropriate\n\n"
@@ -531,8 +546,8 @@ if page == "Today":
                             "keep separate lessons in the same subject separate. Do not list breaks or yard as lessons.\n"
                             "- Each lesson has time, subject, topic, learning_intention, and details. "
                             "Use standard subject names (Maths, English, Gaeilge, Science, History, Geography, etc.).\n"
-                            "- details is the concise usable Markdown lesson content: resources, timed phases, "
-                            "differentiation, assessment and early finisher where appropriate. "
+                            "- details is the concise usable Markdown lesson content: resources (first), "
+                            "differentiation, assessment and early finisher where appropriate. Do NOT duplicate timed phases in details; the app renders the phases array. "
                             "The app will display the supplied subject, topic and learning intention directly above it.\n"
                             "- The learning intention must precisely match what those lesson phases teach.\n"
                             "- Dated individual LESSON progress is evidence of that lesson's outcome. "
@@ -559,6 +574,7 @@ if page == "Today":
                             "Treat CURRENT LEARNING POSITION as the strongest evidence of where each subject currently is, unless newer actual-progress notes explicitly update it. The monthly plan describes intended coverage, not the class's current starting point. "
                             "Any explicit statement such as completed, finished, do not restart, moved on from, or currently working on is a planning constraint, not merely background context. "
                             "Before generating the plan, silently determine for each core subject whether the evidence shows: (a) a specific lesson completed and ready to progress, (b) unfinished learning to continue, (c) missed learning to reschedule, or (d) current position genuinely unknown. Do not equate a completed lesson with a completed subject/topic/unit. "
+                            "SILENT RUBRIC SELF-CHECK: evidence alignment, progression, timetable accuracy, lesson quality, engagement/practicality, specificity, workload/usability. Resolve material weaknesses before returning the day plan.\n"
                             "FINAL VALIDATION: compare every lesson focus against Current Learning Position and teacher-confirmed carryover decisions. Completed/removed carryover overrides older contradictory evidence for that item. "
                             "For EACH carryover ID linked to a lesson, its phases must explicitly resume that specific previous task. "
                             "Include a 'Carryover:' line in that lesson's details quoting the item's exact learning text verbatim. Without that explicit reference its completion link will be discarded. "
@@ -568,19 +584,30 @@ if page == "Today":
                         )
                     )
 
+                    generation_seconds = round(perf_counter() - generation_started, 2)
                     generated_plan = parse_generated_plan(response.output_text, planning_date.isoformat())
-                    validate_protected_plan(generated_plan, teacher_profile)
-                    retain_explicit_links(generated_plan, outstanding_carryover)
                     generated_plan["monthly_plan"] = {key: selected_monthly[key] for key in ("id", "title", "start_date", "end_date")}
+                    generated_plan = quality_gate(generated_plan, quality_context, client, generation_format)
+                    generated_plan["planning_quality"]["generation_seconds"] = generation_seconds
                     store.save_day_plan(generated_plan)
+                    st.session_state.pop("last_planning_check", None)
                     day_state = {"plan": generated_plan, "progress": None}
                     st.session_state["todays_plan"] = plan_markdown(generated_plan)
                     st.session_state["todays_plan_date"] = planning_date.isoformat()
                     st.session_state["todays_plan_day"] = planning_day
 
+                except QualityFailure as error:
+                    st.session_state['last_planning_check'] = {'date': planning_date.isoformat(), **error.report}
+                    st.error(str(error))
                 except Exception:
                     st.error("Teacher AI could not generate a complete lesson plan. Your previous saved plan is unchanged. Please try again.")
 
+    failed_check = st.session_state.get('last_planning_check')
+    if failed_check and failed_check['date'] == planning_date.isoformat():
+        with st.expander('Planning checks — latest attempt'):
+            st.caption(failed_check['state'])
+            for finding in failed_check.get('findings', []):
+                st.write(finding['message'])
     st.subheader("Lessons")
 
     saved_plan = day_state["plan"]
@@ -592,6 +619,17 @@ if page == "Today":
             st.caption("This saved day plan predates dated Monthly Plans; its original monthly source was not recorded.")
         st.caption(f"Generated for **{planning_day}, {planning_date.strftime('%d/%m/%Y')}**")
         st.markdown(plan_markdown(saved_plan))
+        quality = saved_plan.get('planning_quality')
+        if quality:
+            with st.expander('Planning checks'):
+                st.caption(f"{quality['state']} · rubric V{quality['version']} · {quality['revision_count']} revision(s)")
+                st.write('Protected timetable, evidence alignment and lesson quality checked.')
+                for finding in quality.get('initial_findings', []):
+                    st.write('Revised: ' + finding['message'])
+                for decision in quality.get('carryover_decisions', []):
+                    if decision['decision'] == 'deferred':
+                        st.caption('Carryover deferred: ' + decision['reason'])
+                st.caption(f"Extra AI calls: {quality['extra_ai_calls']} · checks/repair: {quality['latency_seconds']}s")
         st.divider()
         st.subheader("How did today go?")
         st.caption("Mark all completed, then change any exceptions. Notes are optional. Nothing is saved until you press Save.")
