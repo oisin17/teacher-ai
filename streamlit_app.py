@@ -4,13 +4,18 @@ import io
 import hashlib
 from uuid import uuid4
 from monthly_plans import suggest_dates
+from carryover import SUGGESTION_FORMAT
 from pypdf import PdfReader
 from docx import Document
 import importlib
+import lesson_progress
+refresh_lessons = "carryover_ids" not in lesson_progress.PLAN_FORMAT["schema"]["properties"]["lessons"]["items"]["properties"]
+if refresh_lessons:
+    importlib.reload(lesson_progress)
 import persistence
 # Streamlit hot reload can retain the previous imported storage module.
 # Reload only when that cached module lacks this rollout's additive API.
-if not hasattr(persistence.Store, "select_monthly_plan"):
+if refresh_lessons or not hasattr(persistence.Store, "carryover_context"):
     importlib.reload(persistence)
 from persistence import Store, StorageError
 import json
@@ -45,7 +50,7 @@ def initialise_storage(database_url, schema_version):
     Store(database_url).initialise()
 
 
-storage_call(initialise_storage, st.secrets.get("DATABASE_URL", ""), 4)
+storage_call(initialise_storage, st.secrets.get("DATABASE_URL", ""), 5)
 
 
 def save_teacher_profile(profile):
@@ -119,6 +124,7 @@ def lesson_progress_inputs(lessons, prefix):
         for lesson in lessons:
             st.session_state[f"{prefix}_{lesson['lesson_id']}_status"] = "Completed"
     outcomes = []
+    carry_labels = {i["id"]: i["learning"] for i in storage_call(store.list_carryover)}
     with st.form(f"{prefix}_form"):
         # Submit draft inputs to the callback so a late bulk action preserves
         # any notes already typed in the form. It does not save teaching data.
@@ -144,12 +150,95 @@ def lesson_progress_inputs(lessons, prefix):
                     placeholder="Short note (optional)", max_chars=300,
                     key=note_key, label_visibility="collapsed",
                 )
-            outcomes.append({**lesson, "status": status, "note": note.strip()})
+            completed_ids = []
+            for carry_id in lesson.get("carryover_ids", []):
+                if st.checkbox(f"This carryover is now finished: {carry_labels.get(carry_id, carry_id)}",
+                               value=carry_id in lesson.get("completed_carryover_ids", []),
+                               key=f"{prefix}_{lesson['lesson_id']}_carry_{carry_id}"):
+                    completed_ids.append(carry_id)
+            outcome = {**lesson, "status": status, "note": note.strip()}
+            if lesson.get("carryover_ids"):
+                outcome["completed_carryover_ids"] = completed_ids
+            outcomes.append(outcome)
         submitted = st.form_submit_button(
             "Save Today's Progress" if prefix.startswith("today_") else "Save Correction",
             type="primary",
         )
     return outcomes, submitted
+
+
+def transition_review(monthly, selected_date):
+    context = storage_call(store.carryover_context, monthly, selected_date)
+    needs_review = bool(context["previous"] and context["review"] is None)
+    if needs_review:
+        st.subheader("Month Transition / Carryover")
+        st.write(f"Moving into {monthly['title']} — anything to carry over?")
+        st.caption("Review suggestions, uncheck incorrect items, or add your own. They are not saved until you confirm.")
+        draft_key = f"carry_suggestions_{monthly['id']}_{selected_date}"
+        if draft_key not in st.session_state:
+            try:
+                response = client.responses.create(model="gpt-5.4-mini", text={"format": SUGGESTION_FORMAT}, input=(
+                    "Suggest at most 6 specific unfinished or not-taught learning items from the prior period's actual progress and Current Learning below. "
+                    "These are suggestions for teacher review, not completion decisions. Quote the source date/note in evidence. "
+                    "Teacher notes override statuses. Do not infer unfinished learning from the monthly curriculum itself, invent a stopping point, "
+                    "or suggest already resolved learning. Return an empty list when evidence is insufficient. Exclude existing carryover items.\n"
+                    f"PRIOR PROGRESS: {context['history']}\nCURRENT LEARNING: {context['position']}\nEXISTING ITEMS: {context['items']}"))
+                suggested = json.loads(response.output_text)["items"]
+                if not isinstance(suggested, list) or len(suggested) > 6 or any(
+                    not isinstance(i, dict) or any(not isinstance(i.get(k), str) for k in ("subject", "learning", "evidence")) for i in suggested):
+                    raise ValueError("Invalid suggestions")
+                st.session_state[draft_key] = suggested
+            except Exception:
+                st.session_state[draft_key] = []
+                st.warning("Suggestions could not be loaded. You can add carryover manually or choose Nothing to carry over.")
+        chosen = []
+        with st.form(f"carry_review_{monthly['id']}"):
+            for index, suggestion in enumerate(st.session_state[draft_key]):
+                keep = st.checkbox(f"Carry over {suggestion['subject']}", value=True, key=f"{draft_key}_{index}_keep")
+                learning = st.text_input(f"{suggestion['subject']} unfinished learning", value=suggestion['learning'][:300], max_chars=300, key=f"{draft_key}_{index}_text")
+                st.caption(suggestion["evidence"][:1500])
+                if keep:
+                    chosen.append({"subject": suggestion["subject"], "learning": learning, "evidence": suggestion["evidence"][:1500]})
+            subject = st.selectbox("Add another item — subject", ["Maths", "English", "Gaeilge", "SESE", "Other"])
+            learning = st.text_area("Another carryover item (optional)", max_chars=900, help="One item per line; keep each under 300 characters.")
+            confirm = st.form_submit_button("Save carryover and continue", type="primary")
+            nothing = st.form_submit_button("Nothing to carry over")
+        if confirm or nothing:
+            if nothing:
+                chosen = []
+            else:
+                chosen.extend({"subject": subject, "learning": line.strip(), "evidence": "Teacher added manually"} for line in learning.splitlines() if line.strip())
+            items = [{**i, "id": uuid4().hex, "period_id": monthly["id"], "created_date": selected_date, "state": "outstanding"} for i in chosen]
+            try:
+                store.save_period_review(monthly, selected_date, items, True)
+            except StorageError as error:
+                st.error(str(error))
+            else:
+                st.rerun()
+    return context, needs_review
+
+
+def carryover_controls(items):
+    with st.expander("Carryover learning", expanded=any(i["state"] == "outstanding" for i in items)):
+        if not items:
+            st.caption("No confirmed carryover items.")
+        for item in items:
+            st.write(f"**{item['subject']} — {item['learning']}** ({item['state']})")
+            st.caption(item["evidence"])
+            if item["state"] == "outstanding":
+                completed = st.button("Mark complete", key=f"complete_{item['id']}")
+                removed = st.button("Remove", key=f"remove_{item['id']}")
+                if completed or removed:
+                    storage_call(store.set_carryover_state, item["id"], "completed" if completed else "removed")
+                    st.rerun()
+            elif item["state"] == "completed" and item.get("completion_source") != "lesson":
+                if st.button("Reopen item", key=f"reopen_{item['id']}"):
+                    storage_call(store.set_carryover_state, item["id"], "outstanding")
+                    st.rerun()
+            elif item["state"] == "removed":
+                if st.button("Restore item", key=f"restore_{item['id']}"):
+                    storage_call(store.set_carryover_state, item["id"], "outstanding")
+                    st.rerun()
 
 
 if "teacher_profile" not in st.session_state:
@@ -243,6 +332,8 @@ st.divider()
 if page == "Today":
 
     st.header("Today's Plan")
+    if st.session_state.pop("lesson_progress_saved", False):
+        st.success("Lesson progress saved and Current Learning Position updated.")
     st.write(
         "Your teaching day will appear here based on your timetable, "
         "plans and actual classroom progress."
@@ -269,10 +360,13 @@ if page == "Today":
         st.caption(f"Confirmed coverage: {selected_monthly['start_date']} to {selected_monthly['end_date']}")
     else:
         st.warning("No confirmed Monthly Plan covers this date. Upload or confirm its dates in Planning Setup before generating.")
+    carry_context, needs_review = transition_review(selected_monthly, planning_date.isoformat()) if selected_monthly else ({"items": []}, False)
+    carryover_controls(carry_context["items"])
+    outstanding_carryover = [i for i in carry_context["items"] if i["state"] == "outstanding"]
     day_state = storage_call(store.load_day, planning_date.isoformat())
     if day_state["progress"]:
         st.caption("Progress is already saved for this date. You can update it below or in Progress History.")
-    if st.button("✨ Generate Today's Plan", type="primary", disabled=day_state["progress"] is not None or selected_monthly is None):
+    if st.button("✨ Generate Today's Plan", type="primary", disabled=day_state["progress"] is not None or selected_monthly is None or needs_review):
 
         teacher_profile = st.session_state.get("teacher_profile", {})
         planning_setup = storage_call(store.load_document, "planning_setup")
@@ -385,7 +479,12 @@ if page == "Today":
 
                             f"TEACHER PROFILE:\n{teacher_profile}\n\n"
                             f"WEEKLY TIMETABLE:\n{timetable_text}\n\n"
-                            f"CURRENT MONTHLY PLAN:\n{monthly_plan_text}\n\n"
+                            f"CURRENT MONTHLY PLAN (teacher-confirmed {selected_monthly['start_date']} to {selected_monthly['end_date']}; these override stale document headings):\n{monthly_plan_text}\n\n"
+                            f"CONFIRMED OUTSTANDING CARRYOVER:\n{outstanding_carryover}\n\n"
+                            "Carryover is a short-term priority alongside the new month's main coverage. Schedule into appropriate lessons over the next days; do not cram everything into day one. "
+                            "For a lesson addressing carryover, include its exact ID in carryover_ids. Use [] for other lessons. Do not link unrelated learning or already completed/removed items. "
+                            "A carryover lesson must state the specific unfinished learning it addresses. Teacher completion of carryover overrides stale older evidence for that item.\n"
+                            f"ALL REVIEWED CARRYOVER DECISIONS:\n{carry_context['items']}\n\n"
                             f"YEARLY PLAN:\n{yearly_plan_text}\n\n"
                             f"CURRENT LEARNING POSITION (teacher-confirmed current classroom position):\n{current_learning_position}\n\n"
                             f"RECENT ACTUAL CLASSROOM PROGRESS (most recent first):\n{recent_progress}\n\n"
@@ -435,7 +534,8 @@ if page == "Today":
                     position = storage_call(store.save_lesson_progress, planning_date.isoformat(),
                                             saved_plan["plan_id"], outcomes)
                     st.session_state["current_learning_position"] = position
-                    st.success("Lesson progress saved and Current Learning Position updated.")
+                    st.session_state["lesson_progress_saved"] = True
+                    st.rerun()
     elif day_state["progress"]:
         st.info("This date has a historical whole-day record. Review or correct it in Progress History.")
     else:

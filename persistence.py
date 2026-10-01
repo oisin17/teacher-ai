@@ -9,6 +9,7 @@ from contextlib import closing, contextmanager
 from datetime import date
 from pathlib import Path
 
+from carryover import validate_item, before_date
 from monthly_plans import validate_monthly_plan, iso_date
 import psycopg
 from lesson_progress import (
@@ -111,6 +112,8 @@ class Store:
                            (start_date IS NOT NULL AND end_date IS NOT NULL AND start_date <= end_date))
                 )
             """)
+            connection.execute("CREATE TABLE IF NOT EXISTS period_reviews (period_id TEXT PRIMARY KEY, review_data TEXT NOT NULL)")
+            connection.execute("CREATE TABLE IF NOT EXISTS carryover_items (id TEXT PRIMARY KEY, item_data TEXT NOT NULL)")
             marker = connection.execute(
                 "SELECT name FROM storage_migrations WHERE name = %s",
                 ("legacy_sqlite_v1",),
@@ -183,10 +186,93 @@ class Store:
                 tuple(plan[key] for key in ("id", "title", "source_filename", "plan_text", "start_date", "end_date")))
 
     @staticmethod
+    def _carryover(connection, as_of=None):
+        items = [json.loads(row[0]) for row in connection.execute("SELECT item_data FROM carryover_items ORDER BY id").fetchall()]
+        finished = {}
+        for row in Store._history(connection):
+            if as_of and row["planning_date"] > as_of:
+                continue
+            for lesson in row.get("lessons", []):
+                if lesson["status"] == "Completed":
+                    for id in lesson.get("completed_carryover_ids", []):
+                        finished[id] = row["planning_date"]
+        for item in items:
+            if item["state"] == "outstanding" and item["id"] in finished:
+                item["state"] = "completed"
+                item["completed_date"] = finished[item["id"]]
+                item["completion_source"] = "lesson"
+        return [item for item in items if not as_of or item["created_date"] <= as_of]
+
+    def list_carryover(self, as_of=None):
+        with self._connection() as connection:
+            return self._carryover(connection, as_of)
+
+    def carryover_context(self, monthly, selected_date):
+        with self._connection() as connection:
+            plans = self._monthly(connection)
+            previous = sorted([p for p in plans if p["end_date"] and p["end_date"] < monthly["start_date"]], key=lambda p: p["end_date"])
+            row = connection.execute("SELECT review_data FROM period_reviews WHERE period_id = %s", (monthly["id"],)).fetchone()
+            prior = previous[-1] if previous else None
+            history = [r for r in self._history(connection) if prior and prior["start_date"] <= r["planning_date"] <= prior["end_date"] and r["planning_date"] < selected_date]
+            row_position = connection.execute("SELECT position_data FROM current_learning_position WHERE id = 1").fetchone()
+            position = before_date(json.loads(row_position[0]) if row_position else {}, prior["end_date"] if prior else selected_date)
+            return {"previous": prior, "review": json.loads(row[0]) if row else None,
+                    "history": history[-10:], "position": position,
+                    "items": self._carryover(connection, selected_date)}
+
+    def save_period_review(self, monthly, selected_date, items, confirmed=False):
+        try:
+            school_date(selected_date)
+            if not monthly["start_date"] <= selected_date <= monthly["end_date"]:
+                raise ValueError("Review date outside confirmed period")
+            if confirmed is not True or not isinstance(items, list) or len(items) > 20:
+                raise ValueError("Explicit confirmation required")
+            for item in items:
+                validate_item(item)
+                if item["period_id"] != monthly["id"] or item["created_date"] != selected_date or item["state"] != "outstanding":
+                    raise ValueError("Invalid review item")
+            if len({i["id"] for i in items}) != len(items):
+                raise ValueError("Duplicate item")
+        except (ValueError, KeyError, TypeError):
+            raise StorageError("Confirm valid carryover items before saving. Nothing has been saved.") from None
+        with self._connection() as connection:
+            self._lock(connection)
+            current = next((p for p in self._monthly(connection) if p["id"] == monthly["id"]), None)
+            if current != monthly:
+                raise StorageError("The Monthly Plan changed. Refresh before confirming carryover.")
+            if connection.execute("SELECT period_id FROM period_reviews WHERE period_id = %s", (monthly["id"],)).fetchone():
+                raise StorageError("This period was already reviewed in another session. Refresh to see the saved items.")
+            for item in items:
+                connection.execute("INSERT INTO carryover_items (id, item_data) VALUES (%s, %s)", (item["id"], json.dumps(item, ensure_ascii=False)))
+            review = {"period_id": monthly["id"], "review_date": selected_date, "nothing_selected": not items, "monthly_plan": {k: monthly[k] for k in ("id", "title", "start_date", "end_date")}}
+            connection.execute("INSERT INTO period_reviews (period_id, review_data) VALUES (%s, %s)", (monthly["id"], json.dumps(review)))
+
+    def set_carryover_state(self, id, state):
+        if state not in ("completed", "removed", "outstanding"):
+            raise StorageError("Invalid carryover action.")
+        with self._connection() as connection:
+            self._lock(connection)
+            row = connection.execute("SELECT item_data FROM carryover_items WHERE id = %s", (id,)).fetchone()
+            if not row:
+                raise StorageError("This carryover item no longer exists. Refresh.")
+            item = json.loads(row[0])
+            item["state"] = state
+            connection.execute("UPDATE carryover_items SET item_data = %s WHERE id = %s", (json.dumps(item, ensure_ascii=False), id))
+
+    @staticmethod
+    def _validate_links(plan, lessons):
+        for original, outcome in zip(plan["lessons"], lessons):
+            linked = original.get("carryover_ids", [])
+            if outcome.get("carryover_ids", []) != linked or any(id not in linked for id in outcome.get("completed_carryover_ids", [])):
+                raise StorageError("Carryover links changed. Refresh before saving progress.")
+            if outcome.get("completed_carryover_ids") and outcome["status"] != "Completed":
+                raise StorageError("Partial or not-taught lessons cannot finish carryover. Uncheck carryover completion before saving.")
+
+    @staticmethod
     def _import_legacy(connection, legacy_path):
         # Import only into a completely empty destination, once, atomically.
         # A stale deployment must never overwrite teacher edits in PostgreSQL.
-        for table in [*DOCUMENTS, "actual_progress", "day_plans", "monthly_plans"]:
+        for table in [*DOCUMENTS, "actual_progress", "day_plans", "monthly_plans", "period_reviews", "carryover_items"]:
             if connection.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone():
                 return
         path = Path(legacy_path)
@@ -311,6 +397,9 @@ class Store:
             if connection.execute("SELECT id FROM actual_progress WHERE planning_date = %s LIMIT 1",
                                   (plan["planning_date"],)).fetchone():
                 raise StorageError("Progress already exists for this date. Review or correct it in Progress History.")
+            known = {i["id"] for i in self._carryover(connection, plan["planning_date"]) if i["state"] == "outstanding"}
+            if any(id not in known for lesson in plan["lessons"] for id in lesson.get("carryover_ids", [])):
+                raise StorageError("A carryover item changed while planning. Generate again with the latest items.")
             connection.execute("""
                 INSERT INTO day_plans (planning_date, plan_data) VALUES (%s, %s)
                 ON CONFLICT (planning_date) DO UPDATE SET plan_data = EXCLUDED.plan_data
@@ -349,6 +438,7 @@ class Store:
                 {key: item[key] for key in LESSON_FIELDS} for item in plan["lessons"]
             ] != [{key: item[key] for key in LESSON_FIELDS} for item in lessons]:
                 raise StorageError("The saved plan changed in another session. Refresh before recording progress.")
+            self._validate_links(plan, lessons)
             payload = {"plan_id": plan_id, "overview": plan["overview"], "lessons": lessons}
             if plan.get("monthly_plan"):
                 payload["monthly_plan"] = plan["monthly_plan"]
@@ -392,6 +482,7 @@ class Store:
             if connection.execute("SELECT id FROM actual_progress WHERE planning_date = %s AND id != %s LIMIT 1",
                                   (planning_date, record_id)).fetchone():
                 return None
+            self._validate_links(existing, lessons)
             payload = {key: existing[key] for key in ("plan_id", "overview")}
             payload["lessons"] = lessons
             if existing.get("monthly_plan"):
@@ -455,7 +546,7 @@ class Store:
     def export_backup(self):
         with self._connection() as connection:
             self._lock(connection)
-            backup = {"format_version": 3}
+            backup = {"format_version": 4}
             for table, column in DOCUMENTS.items():
                 row = connection.execute(
                     f"SELECT {column} FROM {table} WHERE id = 1"
@@ -473,6 +564,8 @@ class Store:
             for row in backup["actual_progress"]:
                 if row["id"] in lesson_rows:
                     row.update(lesson_rows[row["id"]])
+            backup["period_reviews"] = [json.loads(row[0]) for row in connection.execute("SELECT review_data FROM period_reviews ORDER BY period_id").fetchall()]
+            backup["carryover_items"] = [json.loads(row[0]) for row in connection.execute("SELECT item_data FROM carryover_items ORDER BY id").fetchall()]
             backup["monthly_plans"] = self._monthly(connection)
             backup["day_plans"] = [json.loads(row[0]) for row in connection.execute(
                 "SELECT plan_data FROM day_plans ORDER BY planning_date"
@@ -482,7 +575,7 @@ class Store:
     def restore_backup(self, backup):
         # Validate the whole upload before starting any write.
         try:
-            if not isinstance(backup, dict) or backup.get("format_version") not in (1, 2, 3):
+            if not isinstance(backup, dict) or backup.get("format_version") not in (1, 2, 3, 4):
                 raise ValueError("Unsupported backup")
             if not all(isinstance(backup.get(table), dict) for table in DOCUMENTS):
                 raise ValueError("Missing documents")
@@ -511,7 +604,7 @@ class Store:
             plans = backup.get("day_plans", [])
             if not isinstance(plans, list):
                 raise ValueError("Invalid plans")
-            monthly = backup["monthly_plans"] if backup["format_version"] == 3 else []
+            monthly = backup["monthly_plans"] if backup["format_version"] >= 3 else []
             if not isinstance(monthly, list):
                 raise ValueError("Invalid monthly plans")
             ids = set()
@@ -523,6 +616,20 @@ class Store:
             confirmed = sorted([p for p in monthly if p["start_date"]], key=lambda p: p["start_date"])
             if any(a["end_date"] >= b["start_date"] for a, b in zip(confirmed, confirmed[1:])):
                 raise ValueError("Overlapping monthly plans")
+            reviews = backup.get("period_reviews", []) if backup["format_version"] >= 4 else []
+            carry_items = backup.get("carryover_items", []) if backup["format_version"] >= 4 else []
+            if not isinstance(reviews, list) or not isinstance(carry_items, list):
+                raise ValueError("Invalid carryover backup")
+            if len({r["period_id"] for r in reviews}) != len(reviews) or len({i["id"] for i in carry_items}) != len(carry_items):
+                raise ValueError("Duplicate carryover backup")
+            for review in reviews:
+                school_date(review["review_date"])
+                if review["period_id"] not in ids or not isinstance(review["nothing_selected"], bool):
+                    raise ValueError("Invalid period review")
+            for item in carry_items:
+                validate_item(item)
+                if item["period_id"] not in {r["period_id"] for r in reviews}:
+                    raise ValueError("Missing period review")
             dates = set()
             for plan in plans:
                 validate_plan(plan)
@@ -534,7 +641,7 @@ class Store:
         with self._connection() as connection:
             self._lock(connection)
             # Never overwrite existing durable teacher edits through restore.
-            for table in [*DOCUMENTS, "actual_progress", "day_plans", "lesson_progress", "monthly_plans"]:
+            for table in [*DOCUMENTS, "actual_progress", "day_plans", "lesson_progress", "monthly_plans", "period_reviews", "carryover_items"]:
                 if connection.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone():
                     return False
             for table, column in DOCUMENTS.items():
@@ -564,4 +671,8 @@ class Store:
                                    tuple(item[key] for key in ("id", "title", "source_filename", "plan_text", "start_date", "end_date")))
             if backup["format_version"] < 3:
                 self._migrate_monthly(connection)
+            for review in reviews:
+                connection.execute("INSERT INTO period_reviews (period_id, review_data) VALUES (%s, %s)", (review["period_id"], json.dumps(review)))
+            for item in carry_items:
+                connection.execute("INSERT INTO carryover_items (id, item_data) VALUES (%s, %s)", (item["id"], json.dumps(item, ensure_ascii=False)))
         return True

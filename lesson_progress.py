@@ -19,8 +19,8 @@ PLAN_FORMAT = {
             "overview": {"type": "string"},
             "lessons": {"type": "array", "items": {
                 "type": "object", "additionalProperties": False,
-                "properties": {key: {"type": "string"} for key in LESSON_FIELDS if key != "lesson_id"},
-                "required": [key for key in LESSON_FIELDS if key != "lesson_id"],
+                "properties": {**{key: {"type": "string"} for key in LESSON_FIELDS if key != "lesson_id"}, "carryover_ids": {"type": "array", "items": {"type": "string"}}},
+                "required": [key for key in LESSON_FIELDS if key != "lesson_id"] + ["carryover_ids"],
             }},
         }, "required": ["overview", "lessons"],
     },
@@ -46,7 +46,15 @@ def validate_lessons(lessons, progress=False):
         if lesson["lesson_id"] in ids:
             raise ValueError("Duplicate lesson")
         ids.add(lesson["lesson_id"])
+        for key in ("carryover_ids", "completed_carryover_ids"):
+            values = lesson.get(key, [])
+            if not isinstance(values, list) or any(not isinstance(v, str) or not v for v in values) or len(set(values)) != len(values):
+                raise ValueError("Invalid carryover links")
         if progress:
+            if any(id not in lesson.get("carryover_ids", []) for id in lesson.get("completed_carryover_ids", [])):
+                raise ValueError("Unlinked carryover completion")
+            if lesson.get("completed_carryover_ids") and lesson.get("status") != "Completed":
+                raise ValueError("Partial or not-taught cannot finish carryover")
             if lesson.get("status") not in STATUSES:
                 raise ValueError("Choose a status for every lesson")
             if not isinstance(lesson.get("note"), str) or len(lesson["note"]) > 300:
