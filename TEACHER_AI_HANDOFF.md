@@ -900,3 +900,110 @@ a new day plan without replacing October 1. Examples: Art Angle City links A03
 25b49c7eb8a84eaca3909d7642b37f78; paired food conversations links G02
 fb095e38b66d41e9b0f991bc1f531985. Friday Sport remains 11:15–11:45 and
 pack-up 14:20–14:30. No progress-save action was performed in this live check.
+
+
+## 25. Planning quality rubric — implemented; final live verification pending (1 October 2026)
+
+PR #6 merged the additive V1 planning quality gate:
+https://github.com/oisin17/teacher-ai/pull/6
+
+The day-plan JSON now stores planning_quality metadata with Pass / Revise /
+Blocked / Unchecked, version, initial/final findings, revision count, extra model
+calls, check/repair timing, generation timing, carryover decisions and context
+digest. Only Pass can replace the saved plan. Original plans without phases or
+quality metadata remain readable; format-5 backups preserve the new metadata.
+No new database table, infrastructure, account or credential.
+
+Code checks run first: selected confirmed Monthly Plan/date/provenance; explicit
+Daily/weekday protected timetable blocks; school bounds, lesson/overview overlaps
+and matching slots; structured positive phase minutes summing to the clock slot;
+Friday afternoon Art; Thursday 13:50–14:00 pack-up and 14:00–14:30 external Singing;
+active, current, non-completed, non-held Monthly Plan links and valid outstanding
+carryover IDs. Semantic hard-block codes cannot be downgraded by the model.
+
+One compact whole-day semantic review checks alignment, progression, timetable,
+lesson quality, practicality, specificity and usability. At most ONE targeted
+whole-plan repair is allowed, followed by code checks and a semantic recheck.
+No evaluation writes Actual Progress, Current Learning, item outcomes, carryover
+state or period reviews. Saving rechecks the evidence digest under the existing
+database lock; changed teacher evidence rejects the candidate and preserves the
+previous plan. Feedback is optional collapsed "Planning checks"; no visible score.
+
+The semantic rules preserve short retrieval, reasoned scheduling deferral of
+carryover, identified-prior-task continuation where the exact prior task is
+unknown, and addressing PART of broad/recurring objectives without claiming their
+completion. Unsupported named programme content, contradiction of unfinished
+learning, main-focus repetition of explicitly completed learning and invalid scope
+remain hard blockers. Optional resources need usable fallbacks.
+
+Live rollout exposed:
+- AI phase arithmetic can remain wrong after repair. Inside the single repair,
+  code compiles only modest residual discrepancies (<=25% of slot duration) to
+  positive whole minutes, preserving activities and clock slots. Larger discrepancies
+  remain blockers. phase_adjustments retains before/after allocations and semantic
+  review still must find delivery practical.
+- Retyped review quotes could be unverifiable. Production review now selects
+  schema-constrained evidence IDs from one annotated packet. These resolve to exact
+  original passages for readable metadata. IDs are deduplicated and capped at 900;
+  long texts are exact contiguous passages. This adds no extra model call.
+- The reviewer needed exact saved item source quotations to recognise known titles,
+  and explicit rules against confusing partial broad coverage with full completion
+  or demanding invented detail for unspecified carryover.
+- Canonical carryover source labels are rendered from explicit IDs. They are
+  references ONLY: semantic review independently checks that actual phases resume
+  the task, and blocks unrelated teaching. Labels do not authorise completion.
+- Technical/malformed reviews remain Unchecked. Safe diagnostics expose only our
+  validation reason or exception class, never credential/API error bodies.
+
+Read-only browser diagnostic: append rubric_probe=read-only. Once a selected date
+has a saved structured plan, "Test conflicting candidate without saving" moves a
+COPY into a protected slot, runs the same bounded gate, and reports whether the
+original saved plan is unchanged. It has no save action.
+
+Validation: 96 local tests passed on the final implementation. GitHub Actions run
+36875414520 succeeded, including PostgreSQL persistence/migration/concurrency:
+https://github.com/oisin17/teacher-ai/actions/runs/36875414520
+Tests cover all blocker categories, code-before-AI ordering, the one-repair bound,
+phase budgets, exact evidence references, carryover deferral, retrieval, reviewer
+failure, previous-plan preservation, unchanged progress, stale evidence, metadata
+backup round-trip and the read-only diagnostic.
+
+Live observations BEFORE the browser environment disconnected:
+- 30 September displayed September's confirmed 2026 plan; genuine progress already
+  saved prevented regeneration. 1 October displayed October's confirmed plan.
+  Existing first-use review stayed reviewed and the two real carryovers remained
+  outstanding (unfinished English final activity; Gaeilge missed due to assembly).
+- Thursday and Friday generation attempts reached the gate. Invalid timing,
+  references or unresolved semantic findings were Blocked/Unchecked and preserved
+  the previous saved plans. Observed failed-attempt check/repair overhead was
+  roughly 6–16 seconds and 1–2 extra model calls (generation time excluded).
+- A fresh pre-rollout live backup matched the preceding export exactly. No fictional
+  teaching outcomes or item/carryover completion actions were saved.
+
+IMPORTANT: final successful-plan browser validation and its requested metrics are
+NOT complete. After deploying the final evidence-reference/rule fix, a new Thursday
+generation was started; the browser transport disconnected while attempting Friday.
+The browser environment then returned environment_offline (409). Do not assume the
+pending Thursday or Friday operation did/did not save. Inspect current saved plans
+and export a fresh backup before doing further live writes. No successful-plan
+average extra-call/latency measurement is available yet.
+
+Next safe work:
+1. Inspect current main, saved October 1/2 quality metadata and any pending results;
+   do not regenerate a successful plan unnecessarily.
+2. Finish live Thursday Singing / Friday Art and English/Gaeilge carryover checks
+   against the real 2026 evidence, without saving fictional teaching progress.
+3. Run the read-only deliberately conflicting candidate diagnostic; verify revised
+   or blocked, original plan unchanged.
+4. Export and compare all non-day-plan backup areas against the pre-rubric backup;
+   report actual successful-plan revision/call/latency metrics and screenshot proof.
+5. Update this section with observed completion rather than treating automated
+   coverage as completed browser testing.
+
+Local pre-rubric export was /workspace/scratch/teacher-ai-before-planning-rubric.json.
+It contains the unchanged original October 1 plan 10ed7146968a4a04ad38dc42d6b1d6e9
+and October 2 plan 20c6ed2c5c1842f397ea9e78b6b51e55, one genuine September 30 progress
+record, 349 historical learning item records (106 active October), zero monthly
+item outcome updates, and two outstanding free-text carryovers. Preserve all of
+these historical IDs/evidence. The transient workspace may be inaccessible after
+the environment failure; the GitHub implementation/CI/handoff are durable.
