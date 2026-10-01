@@ -35,6 +35,8 @@ class AppTests(unittest.TestCase):
             self.store.save_monthly_plan({"id": str(month), "title": date(2026, month, 1).strftime("%B %Y Monthly Plan"),
                 "source_filename": "misleading.docx", "plan_text": self.setup["monthly_plan_text"] + str(month),
                 "start_date": f"2026-{month:02}-01", "end_date": f"2026-{month:02}-{end}"}, True)
+        october = self.store.select_monthly_plan("2026-10-01")
+        self.store.save_period_review(october, "2026-10-01", [], True)
         self.store.save_document("current_learning_position", {"Maths": "Addition completed"})
         self.client = Mock()
         self.ai_patch = patch("openai.OpenAI", return_value=self.client)
@@ -71,6 +73,53 @@ class AppTests(unittest.TestCase):
         self.assertEqual(len(app.exception), 0)
         self.assertEqual(len(app.error), 0)
         return app
+
+    def test_linked_completion_and_manual_controls(self):
+        import json
+        october = self.store.select_monthly_plan("2026-10-01")
+        with self.store._connection() as connection:
+            connection.execute("DELETE FROM period_reviews")
+        item = {"id": "carry", "period_id": october["id"], "subject": "English", "learning": "Finish final activity", "evidence": "September partial", "created_date": "2026-10-01", "state": "outstanding"}
+        self.store.save_period_review(october, "2026-10-01", [item], True)
+        output = json.loads(generation_output())
+        output["lessons"][1]["carryover_ids"] = ["carry"]
+        self.client.responses.create.return_value = SimpleNamespace(output_text=json.dumps(output))
+        app = self.new_app()
+        app.date_input[0].set_value(date(2026, 10, 1)).run()
+        self.button(app, "✨ Generate Today's Plan").click().run()
+        self.button(app, "Mark all completed").click().run()
+        next(c for c in app.checkbox if c.label.startswith("This carryover is now finished")).check()
+        self.button(app, "Save Today's Progress").click().run()
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual(self.store.list_carryover()[0]["state"], "completed")
+        # A second item can be resolved outside a generated lesson.
+        with self.store._connection() as connection:
+            second = {**item, "id": "manual", "learning": "Oral practice"}
+            connection.execute("INSERT INTO carryover_items (id, item_data) VALUES (%s, %s)", ("manual", json.dumps(second)))
+        app.run()
+        self.button(app, "Mark complete").click().run()
+        self.assertEqual(next(i for i in self.store.list_carryover() if i["id"] == "manual")["state"], "completed")
+
+    def test_transition_review_suggestions_manual_items_and_no_repeat(self):
+        import json
+        with self.store._connection() as connection:
+            connection.execute("DELETE FROM period_reviews")
+        suggestion = {"subject": "English", "learning": "Finish final activity", "evidence": "30 September: unfinished final activity"}
+        self.client.responses.create.return_value = SimpleNamespace(output_text=json.dumps({"items": [suggestion]}))
+        app = self.new_app()
+        app.date_input[0].set_value(date(2026, 10, 1)).run()
+        self.assertTrue(self.button(app, "✨ Generate Today's Plan").disabled)
+        next(i for i in app.text_area if i.label == "Another carryover item (optional)").set_value("Gaeilge missed lesson")
+        self.button(app, "Save carryover and continue").click().run()
+        self.assertEqual(len(app.exception), 0)
+        items = self.store.list_carryover("2026-10-01")
+        self.assertEqual(len(items), 2)
+        fresh = self.new_app()
+        fresh.date_input[0].set_value(date(2026, 10, 1)).run()
+        self.assertFalse(any(b.label == "Nothing to carry over" for b in fresh.button))
+        self.assertFalse(self.button(fresh, "✨ Generate Today's Plan").disabled)
+        self.store.set_carryover_state(items[0]["id"], "removed")
+        self.assertEqual(self.store.list_carryover()[0]["state"], "removed")
 
     def test_month_boundary_and_missing_month_use_only_confirmed_dates(self):
         self.client.responses.create.return_value = SimpleNamespace(output_text=generation_output())
@@ -124,6 +173,7 @@ class AppTests(unittest.TestCase):
             self.client.responses.create.return_value = SimpleNamespace(output_text=generation_output())
             self.navigate(app, "Today")
             app.date_input[0].set_value(date(2026, 11, 2)).run()
+            self.button(app, "Nothing to carry over").click().run()
             self.button(app, "✨ Generate Today's Plan").click().run()
             self.assertEqual(len(app.exception), 0)
             saved = self.store.load_day("2026-11-02")["plan"]

@@ -77,6 +77,17 @@ class StoreTests(unittest.TestCase):
         self.patcher.stop()
         self.temp.cleanup()
 
+    def test_carryover_backup_roundtrip(self):
+        self.carry_setup()
+        backup = self.store.export_backup()
+        with self.store._connection() as connection:
+            for table in ("period_reviews", "carryover_items", "monthly_plans"):
+                connection.execute(f"DELETE FROM {table}")
+        self.assertTrue(self.store.restore_backup(backup))
+        self.assertEqual(self.store.list_carryover(), backup["carryover_items"])
+        monthly = self.store.select_monthly_plan("2026-10-01")
+        self.assertIsNotNone(self.store.carryover_context(monthly, "2026-10-02")["review"])
+
     def carry_setup(self):
         self.store.save_monthly_plan(self.monthly(), True)
         monthly = self.monthly("oct", "2026-10-01", "2026-10-31")
