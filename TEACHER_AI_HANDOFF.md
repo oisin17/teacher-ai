@@ -727,3 +727,28 @@ period review and two outstanding items. No fictional teaching outcomes were
 saved. Full linked completion, partial/not-taught persistence and correction
 reopening are tested with isolated automated data; a genuine classroom lesson
 progress save remains teacher acceptance work.
+
+## 22. Protected Thursday Singing — 2026-10-01
+
+The owner confirmed external Singing every Thursday, 14:00–14:30, independent
+of Monthly Plan coverage. Teacher Profile now has a durable `thursday_singing`
+checkbox alongside the existing recurring-arrangements text. Thursday pack-up
+moves to 13:50–14:00, replacing the usual 14:20–14:30 slot; school ends at 14:30.
+Generation reloads the durable profile, so another session's new constraint is
+not missed. The prompt protects the external block and excludes it from generated
+curriculum lessons/progress. `timetable_constraints.py` validates Thursday lesson
+and overview ranges before saving: no normal lesson/routine can run beyond 14:00,
+Singing must occupy 14:00–14:30, and pack-up must occupy 13:50–14:00.
+Normal lessons finish by 13:50 so they cannot overwrite pack-up either. Invalid
+output leaves the previous plan unchanged. Other weekdays and existing weekly
+arrangements are preserved. No new table, service or backup format is needed.
+
+55 local tests and PostgreSQL CI passed. Tests cover valid Thursday scheduling,
+overlapping lessons/routines, missing Singing/pack-up, other days, disabled
+constraints, and actual Streamlit generation rejecting conflicting output without
+replacing the saved plan. The live owner profile was saved with the checkbox and
+an appended Thursday exception while retaining existing daily/Sport/Art text.
+
+The live October 1 plan was regenerated and validated: literacy/writing ends
+at 13:50, pack-up is 13:50–14:00, Singing is 14:00–14:30, with no Singing
+curriculum lesson/progress row and no fictional teaching outcomes saved.

@@ -11,7 +11,7 @@ class SingingConstraints(unittest.TestCase):
         self.assertIs(validate_protected_plan(p, {'thursday_singing': True}), p)
 
     def test_overlapping_lesson_or_routine_is_rejected(self):
-        for time in ('13:20–14:05', '14:00–14:20', '14:20–14:30'):
+        for time in ('13:20–14:05', '13:20–14:00', '14:00–14:20', '14:20–14:30'):
             with self.subTest(time=time), self.assertRaises(ValueError):
                 validate_protected_plan(self.plan(time=time), {'thursday_singing': True})
         p = self.plan()

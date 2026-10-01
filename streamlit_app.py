@@ -4,8 +4,11 @@ import io
 import hashlib
 from uuid import uuid4
 from monthly_plans import suggest_dates
-from timetable_constraints import singing_day, validate_protected_plan
 import importlib
+import timetable_constraints
+if getattr(timetable_constraints, "CONSTRAINT_VERSION", None) != 2:
+    importlib.reload(timetable_constraints)
+from timetable_constraints import singing_day, validate_protected_plan
 import carryover
 if not hasattr(carryover, "retain_explicit_links"):
     importlib.reload(carryover)

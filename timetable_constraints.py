@@ -2,6 +2,8 @@
 import re
 from datetime import date
 
+CONSTRAINT_VERSION = 2
+
 TIME_RANGE = re.compile(r'(\d{1,2}):([0-5]\d)\s*[–—-]\s*(\d{1,2}):([0-5]\d)')
 
 
@@ -25,8 +27,8 @@ def validate_protected_plan(plan, profile):
         return plan
     for lesson in plan['lessons']:
         start, end = interval(lesson['time'])
-        if end > 840:
-            raise ValueError('Normal teaching must finish by 14:00 before external Singing.')
+        if end > 830:
+            raise ValueError('Normal teaching must finish by 13:50 for pack-up before external Singing.')
     singing = tidy = False
     for line in plan['overview'].splitlines():
         if not TIME_RANGE.search(line.replace('*', '').replace('`', '')):
@@ -34,7 +36,7 @@ def validate_protected_plan(plan, profile):
         start, end = interval(line)
         external = 'singing' in line.casefold() and start == 840 and end == 870
         singing |= external
-        tidy |= bool(re.search(r'pack|tidy', line, re.I)) and end <= 840
+        tidy |= bool(re.search(r'pack|tidy', line, re.I)) and start == 830 and end == 840
         if end > 840 and not external:
             raise ValueError('Only external Singing can occupy 14:00–14:30.')
     if not singing or not tidy:
