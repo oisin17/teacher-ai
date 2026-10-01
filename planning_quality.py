@@ -9,7 +9,7 @@ from timetable_constraints import interval, TIME_RANGE, singing_day
 from monthly_learning import planning_allowed, fingerprint
 
 RUBRIC_VERSION = 1
-QUALITY_MODULE_VERSION = 11
+QUALITY_MODULE_VERSION = 12
 CATEGORIES = ('alignment', 'progression', 'timetable', 'lesson_quality', 'practicality', 'specificity', 'usability')
 STATES = ('Pass', 'Revise', 'Blocked', 'Unchecked')
 HARD_CODES = ('unsupported_content', 'invalid_scope', 'unfinished_contradiction', 'completed_repetition', 'broad_completion', 'held_scope', 'unavailable_resource', 'missing_essential')
@@ -243,10 +243,12 @@ def evaluate_candidate(plan, context, client):
             'reason':{'type':'string'}},'required':['decision','reason']}
         review_format['schema']['properties']['carryover_decisions'] = {
             'type':'object','additionalProperties':False,
-            'properties':{id:copy.deepcopy(decision_schema) for id in sorted(outstanding)},
+            'properties':{id:dict(copy.deepcopy(decision_schema),properties={
+                'decision':{'type':'string','enum':['addressed' if any(id in l.get('carryover_ids',[]) for l in plan['lessons']) else 'deferred']},
+                'reason':{'type':'string'}}) for id in sorted(outstanding)},
             'required':sorted(outstanding)}
-    response = client.responses.create(model='gpt-5.4-mini',text={'format':review_format},max_output_tokens=3500,
-        input=REVIEW_RULES+'\nSOURCE-REFERENCED PACKET: each text has an evidence_id; long text has ordered contiguous passages. Select the evidence_id of the actual passage supporting each finding. Never retype/paraphrase evidence. IDs refer to passages only, not learning item IDs.\n'+json.dumps(packet,ensure_ascii=False))
+    response = client.responses.create(model='gpt-5.4-mini',reasoning={'effort':'low'},text={'format':review_format},max_output_tokens=5000,
+        input=REVIEW_RULES+'\nCARRYOVER DECISION SCHEMA: addressed means the candidate explicitly schedules this ID; deferred means it does not. These scheduling labels are fixed from links. Independently check whether actual phases fulfil EVERY scheduled carryover; if not, emit invalid_scope/unfinished_contradiction and BLOCK rather than changing its scheduling label. A fixed addressed label is NEVER proof of valid coverage. Explain the scope match or valid deferral in reason.\nSOURCE-REFERENCED PACKET: each text has an evidence_id; long text has ordered contiguous passages. Select the evidence_id of the actual passage supporting each finding. Never retype/paraphrase evidence. IDs refer to passages only, not learning item IDs.\n'+json.dumps(packet,ensure_ascii=False))
     report = json.loads(response.output_text)
     if set(report['checked_categories']) != set(CATEGORIES) or len(report['checked_categories']) != len(CATEGORIES):
         raise ValueError('Incomplete rubric review')

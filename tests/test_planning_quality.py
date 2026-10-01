@@ -112,6 +112,7 @@ class QualityTests(unittest.TestCase):
             schema=kwargs['text']['format']['schema']['properties']['carryover_decisions']
             self.assertEqual(schema['required'],['carry'])
             self.assertFalse(schema['additionalProperties'])
+            self.assertEqual(schema['properties']['carry']['properties']['decision']['enum'],['deferred'])
             return SimpleNamespace(output_text=json.dumps(dict(checked_categories=list(CATEGORIES),findings=[],carryover_decisions={'carry':dict(decision='deferred',reason='Protected Sport reduces available English writing time; next writing slot.')})))
         client.responses.create.side_effect=respond
         result=quality_gate(p,c,client,{})
