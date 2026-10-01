@@ -4,10 +4,13 @@ import io
 import hashlib
 from uuid import uuid4
 from monthly_plans import suggest_dates
-from carryover import SUGGESTION_FORMAT
+import importlib
+import carryover
+if not hasattr(carryover, "retain_explicit_links"):
+    importlib.reload(carryover)
+from carryover import SUGGESTION_FORMAT, retain_explicit_links
 from pypdf import PdfReader
 from docx import Document
-import importlib
 import lesson_progress
 refresh_lessons = "carryover_ids" not in lesson_progress.PLAN_FORMAT["schema"]["properties"]["lessons"]["items"]["properties"]
 if refresh_lessons:
@@ -496,6 +499,7 @@ if page == "Today":
                             "Before generating the plan, silently determine for each core subject whether the evidence shows: (a) a specific lesson completed and ready to progress, (b) unfinished learning to continue, (c) missed learning to reschedule, or (d) current position genuinely unknown. Do not equate a completed lesson with a completed subject/topic/unit. "
                             "FINAL VALIDATION: compare every lesson focus against Current Learning Position and teacher-confirmed carryover decisions. Completed/removed carryover overrides older contradictory evidence for that item. "
                             "For EACH carryover ID linked to a lesson, its phases must explicitly resume that specific previous task. "
+                            "Include a 'Carryover:' line in that lesson's details quoting the item's exact learning text verbatim. Without that explicit reference its completion link will be discarded. "
                             "When the previous task is unknown, use a neutral title and intention (identify and resume the missed/unfinished task), with a short teacher recall check followed by work on the identified task. "
                             "Do not assume it was procedural writing, Bia, or any other new-month content without actual progress evidence. "
                             "If you instead teach only new-month learning today, leave carryover_ids empty and keep that item for another appropriate day. Remove any unsupported link before returning the plan. Then generate today's practical teaching plan now."
@@ -503,6 +507,7 @@ if page == "Today":
                     )
 
                     generated_plan = parse_generated_plan(response.output_text, planning_date.isoformat())
+                    retain_explicit_links(generated_plan, outstanding_carryover)
                     generated_plan["monthly_plan"] = {key: selected_monthly[key] for key in ("id", "title", "start_date", "end_date")}
                     storage_call(store.save_day_plan, generated_plan)
                     day_state = {"plan": generated_plan, "progress": None}

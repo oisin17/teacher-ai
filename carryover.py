@@ -27,3 +27,12 @@ def before_date(position, cutoff):
     return {key: "\n".join(line for line in str(value).splitlines()
             if not (line.startswith("- 20") and line[2:12] > cutoff))
             for key, value in position.items()}
+
+
+def retain_explicit_links(plan, items):
+    """A subject match alone cannot attach a completion control to new learning."""
+    known = {item["id"]: item for item in items}
+    for lesson in plan["lessons"]:
+        lesson["carryover_ids"] = [id for id in lesson.get("carryover_ids", [])
+            if id in known and known[id]["learning"].casefold() in lesson["details"].casefold()]
+    return plan

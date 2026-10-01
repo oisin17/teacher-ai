@@ -83,6 +83,7 @@ class AppTests(unittest.TestCase):
         self.store.save_period_review(october, "2026-10-01", [item], True)
         output = json.loads(generation_output())
         output["lessons"][1]["carryover_ids"] = ["carry"]
+        output["lessons"][1]["details"] += "\nCarryover: Finish final activity"
         self.client.responses.create.return_value = SimpleNamespace(output_text=json.dumps(output))
         app = self.new_app()
         app.date_input[0].set_value(date(2026, 10, 1)).run()
