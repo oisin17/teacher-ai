@@ -1,6 +1,7 @@
 import streamlit as st
 from openai import OpenAI
 import io
+import copy
 import hashlib
 from uuid import uuid4
 from monthly_plans import suggest_dates
@@ -9,7 +10,7 @@ import monthly_learning
 if getattr(monthly_learning, "LEARNING_VERSION", None) != 2:
     importlib.reload(monthly_learning)
 import monthly_learning_ui
-if getattr(monthly_learning_ui, "MODULE_VERSION", None) != 5:
+if getattr(monthly_learning_ui, "MODULE_VERSION", None) != 6:
     importlib.reload(monthly_learning_ui)
 from monthly_learning_ui import review_items, item_inputs, suggest_outcomes
 from monthly_learning import MARKER, fingerprint
@@ -445,9 +446,12 @@ if page == "Today":
                     current_learning_position = load_current_learning_position()
                     st.session_state["current_learning_position"] = current_learning_position
 
+                    generation_format = copy.deepcopy(PLAN_FORMAT)
+                    if generation_items:
+                        generation_format['schema']['properties']['lessons']['items']['properties']['monthly_item_links']['items']['properties']['item_id']['enum'] = [i['item_id'] for i in generation_items]
                     response = client.responses.create(
                         model="gpt-5.4-mini",
-                        text={"format": PLAN_FORMAT},
+                        text={"format": generation_format},
                         input=(
                             "You are Teacher AI, an adaptive planning assistant "
                             "for primary school teachers.\n\n"

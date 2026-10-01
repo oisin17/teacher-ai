@@ -109,6 +109,8 @@ class AppTests(unittest.TestCase):
         self.button(app, 'Mark all completed').click().run()
         next(i for i in app.text_input if i.label == 'English — Narrative openings note (optional)').set_value('Whole opening paragraph finished')
         lesson = self.store.load_day('2026-09-30')['plan']['lessons'][1]
+        item_schema = self.client.responses.create.call_args.kwargs['text']['format']['schema']['properties']['lessons']['items']['properties']['monthly_item_links']['items']['properties']['item_id']
+        self.assertEqual(item_schema['enum'], ['test-item'])
         self.client.responses.create.return_value = SimpleNamespace(output_text=json.dumps({'updates':[dict(lesson_id=lesson['lesson_id'], item_id='test-item', status='Completed', remaining='', evidence='Whole opening paragraph finished')]}))
         self.button(app, 'Suggest item outcomes from notes').click().run()
         self.assertEqual(len(app.exception), 0)

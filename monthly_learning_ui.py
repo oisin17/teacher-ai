@@ -1,5 +1,5 @@
 """Optional item review and exception-only daily outcomes."""
-MODULE_VERSION = 5
+MODULE_VERSION = 6
 import json
 from uuid import uuid4
 import streamlit as st
@@ -145,7 +145,9 @@ def suggest_outcomes(client, lessons, items):
     linked = {link['item_id'] for lesson in noted for link in lesson.get('monthly_item_links', [])}
     source = [{'item_id': i['id'], **{k: i[k] for k in ('subject', 'description', 'type', 'status', 'remaining')}} for i in items.values() if i['id'] in linked]
     snapshots = [{k: lesson.get(k, []) for k in ('lesson_id', 'subject', 'learning_intention', 'status', 'note', 'monthly_item_links')} for lesson in noted]
-    fields = {'lesson_id': {'type': 'string'}, 'item_id': {'type': 'string'},
+    if not linked:
+        return {}
+    fields = {'lesson_id': {'type': 'string', 'enum': [l['lesson_id'] for l in noted]}, 'item_id': {'type': 'string', 'enum': sorted(linked)},
         'status': {'type': 'string', 'enum': list(STATUSES)}, 'remaining': {'type': 'string'}}
     schema = {'type': 'json_schema', 'name': 'monthly_item_outcome_suggestions', 'strict': True,
         'schema': {'type': 'object', 'additionalProperties': False,
