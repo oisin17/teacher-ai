@@ -494,7 +494,11 @@ if page == "Today":
                             "Treat CURRENT LEARNING POSITION as the strongest evidence of where each subject currently is, unless newer actual-progress notes explicitly update it. The monthly plan describes intended coverage, not the class's current starting point. "
                             "Any explicit statement such as completed, finished, do not restart, moved on from, or currently working on is a planning constraint, not merely background context. "
                             "Before generating the plan, silently determine for each core subject whether the evidence shows: (a) a specific lesson completed and ready to progress, (b) unfinished learning to continue, (c) missed learning to reschedule, or (d) current position genuinely unknown. Do not equate a completed lesson with a completed subject/topic/unit. "
-                            "FINAL VALIDATION: compare every lesson focus in the proposed day against Current Learning Position one last time. Remove or replace any contradiction before returning the plan. Then generate today's practical teaching plan now."
+                            "FINAL VALIDATION: compare every lesson focus against Current Learning Position and teacher-confirmed carryover decisions. Completed/removed carryover overrides older contradictory evidence for that item. "
+                            "For EACH carryover ID linked to a lesson, its phases must explicitly resume that specific previous task. "
+                            "When the previous task is unknown, use a neutral title and intention (identify and resume the missed/unfinished task), with a short teacher recall check followed by work on the identified task. "
+                            "Do not assume it was procedural writing, Bia, or any other new-month content without actual progress evidence. "
+                            "If you instead teach only new-month learning today, leave carryover_ids empty and keep that item for another appropriate day. Remove any unsupported link before returning the plan. Then generate today's practical teaching plan now."
                         )
                     )
 
