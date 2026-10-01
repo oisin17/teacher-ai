@@ -36,6 +36,9 @@ import persistence
 if refresh_lessons or getattr(persistence, "PERSISTENCE_VERSION", None) != 11:
     importlib.reload(persistence)
 from persistence import Store, StorageError
+import planning_quality
+if getattr(planning_quality, "QUALITY_MODULE_VERSION", None) != 2:
+    importlib.reload(planning_quality)
 from planning_quality import quality_gate, QualityFailure
 import json
 from datetime import date, timedelta
@@ -606,6 +609,9 @@ if page == "Today":
     if failed_check and failed_check['date'] == planning_date.isoformat():
         with st.expander('Planning checks — latest attempt'):
             st.caption(failed_check['state'])
+            if failed_check.get('failure_reason'):
+                st.caption('Check could not complete: ' + failed_check['failure_reason'])
+            st.caption(f"Extra AI calls: {failed_check.get('extra_ai_calls', 0)} · checks/repair: {failed_check.get('latency_seconds', 0)}s")
             for finding in failed_check.get('findings', []):
                 st.write(finding['message'])
     st.subheader("Lessons")

@@ -1,7 +1,8 @@
 """Read-only browser regression probe; never offers a save action."""
 import copy
 import streamlit as st
-from planning_quality import quality_gate, QualityFailure, protected_blocks
+import planning_quality
+from planning_quality import protected_blocks
 from lesson_progress import PLAN_FORMAT, plan_markdown
 from timetable_constraints import interval
 
@@ -23,9 +24,9 @@ def render_probe(store, day, client):
         st.write(f'Deliberately moved a normal lesson into protected {name}: '+bad['lessons'][0]['time'])
         before=store.load_day(day)['plan']
         try:
-            fixed=quality_gate(bad,context,client,PLAN_FORMAT)
+            fixed=planning_quality.quality_gate(bad,context,client,PLAN_FORMAT)
             st.success('Pass after one targeted revision; diagnostic candidate NOT saved.')
             st.json(fixed['planning_quality'])
-        except QualityFailure as error:
+        except planning_quality.QualityFailure as error:
             st.warning(str(error));st.json(error.report)
         st.write('Previous saved plan unchanged: '+str(store.load_day(day)['plan']==before))

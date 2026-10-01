@@ -9,6 +9,7 @@ from timetable_constraints import interval, TIME_RANGE, singing_day
 from monthly_learning import planning_allowed, fingerprint
 
 RUBRIC_VERSION = 1
+QUALITY_MODULE_VERSION = 2
 CATEGORIES = ('alignment', 'progression', 'timetable', 'lesson_quality', 'practicality', 'specificity', 'usability')
 STATES = ('Pass', 'Revise', 'Blocked', 'Unchecked')
 HARD_CODES = ('unsupported_content', 'invalid_scope', 'unfinished_contradiction', 'completed_repetition', 'broad_completion', 'held_scope', 'unavailable_resource', 'missing_essential')
@@ -218,4 +219,4 @@ def quality_gate(plan, context, client, generation_format):
         raise
     except Exception as e:
         raise QualityFailure('Planning checks could not be completed. Your previous saved plan is unchanged.',
-            {'version':RUBRIC_VERSION,'state':'Unchecked','revision_count':revisions,'extra_ai_calls':calls,'latency_seconds':round(time.perf_counter()-start,2),'findings':initial}) from e
+            {'version':RUBRIC_VERSION,'state':'Unchecked','revision_count':revisions,'extra_ai_calls':calls,'latency_seconds':round(time.perf_counter()-start,2),'findings':initial,'failure_reason':str(e) if isinstance(e,ValueError) else type(e).__name__}) from e
