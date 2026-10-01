@@ -46,6 +46,26 @@ class QualityTests(unittest.TestCase):
         self.assertEqual(result['planning_quality']['state'],'Pass');self.assertEqual(result['planning_quality']['extra_ai_calls'],2)
         self.assertEqual(result['planning_quality']['revision_count'],1);self.assertEqual(result['planning_quality']['context_digest'],digest(c))
 
+    def test_linked_timing_failure_does_not_freeze_potentially_wrong_learning_links(self):
+        from lesson_progress import PLAN_FORMAT
+        c=context();c['carryover']=[dict(id='carry',state='outstanding',learning='Unfinished prior English task')]
+        p=candidate(c);fixed=copy.deepcopy(p)
+        p['lessons'][0]['carryover_ids']=['carry'];p['lessons'][0]['details']+=' Unfinished prior English task'
+        p['lessons'][0]['phases'][0]['minutes']=50
+        client=Mock()
+        def repair(**kwargs):
+            schema=kwargs['text']['format']['schema']['properties']['lessons']['items']['properties']
+            self.assertEqual(schema['carryover_ids']['items']['enum'],['carry'])
+            self.assertEqual(schema['monthly_item_links']['maxItems'],0)
+            return SimpleNamespace(output_text=json.dumps({k:fixed[k] for k in ('overview','lessons')}))
+        responses=iter([repair,lambda **kwargs:review(decisions=[dict(id='carry',decision='deferred',reason='Protected Sport leaves no English writing slot today; next English slot.')])])
+        client.responses.create.side_effect=lambda **kwargs:next(responses)(**kwargs)
+        before=copy.deepcopy(c);result=quality_gate(p,c,client,PLAN_FORMAT)
+        self.assertEqual(result['planning_quality']['repair_kind'],'whole_plan')
+        self.assertEqual(result['planning_quality']['extra_ai_calls'],2)
+        self.assertEqual(result['lessons'][0].get('carryover_ids',[]),[])
+        self.assertEqual(c,before)
+
     def test_modest_repair_arithmetic_is_compiled_without_another_ai_attempt(self):
         c=context();p=candidate(c);fixed=copy.deepcopy(p)
         p['lessons'][0]['phases'][0]['minutes']=50

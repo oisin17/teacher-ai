@@ -9,7 +9,7 @@ from timetable_constraints import interval, TIME_RANGE, singing_day
 from monthly_learning import planning_allowed, fingerprint
 
 RUBRIC_VERSION = 1
-QUALITY_MODULE_VERSION = 14
+QUALITY_MODULE_VERSION = 15
 CATEGORIES = ('alignment', 'progression', 'timetable', 'lesson_quality', 'practicality', 'specificity', 'usability')
 STATES = ('Pass', 'Revise', 'Blocked', 'Unchecked')
 HARD_CODES = ('unsupported_content', 'invalid_scope', 'unfinished_contradiction', 'completed_repetition', 'broad_completion', 'held_scope', 'unavailable_resource', 'missing_essential')
@@ -389,12 +389,27 @@ def quality_gate(plan, context, client, generation_format):
         initial=copy.deepcopy(report['findings'])
         if report['state'] != 'Pass':
             revisions=1
-            if all(f['code']=='phase_duration' and f['lesson_index']>=0 for f in report['findings']):
+            if all(f['code']=='phase_duration' and f['lesson_index']>=0 for f in report['findings']) and not any(l.get('carryover_ids') or l.get('monthly_item_links') for l in plan['lessons']):
                 repair_kind='phase_budget'
                 minute_adjustments=repair_phase_budgets(plan,report['findings'],context,client)
             else:
                 repair_kind='whole_plan'
-                response=client.responses.create(model='gpt-5.4-mini',reasoning={'effort':'low'},text={'format':generation_format},
+                repair_format=copy.deepcopy(generation_format)
+                lesson_schema=repair_format.get('schema',{}).get('properties',{}).get('lessons',{}).get('items',{}).get('properties',{})
+                if lesson_schema:
+                    carry_ids=sorted(c['id'] for c in context['carryover'] if c['state']=='outstanding')
+                    if carry_ids:
+                        lesson_schema['carryover_ids']['items']['enum']=carry_ids
+                    else:
+                        lesson_schema['carryover_ids']['maxItems']=0
+                    monthly=context['monthly_plan']
+                    carry_items={c.get('monthly_item_id') for c in context['carryover'] if c['state']=='outstanding'}
+                    item_ids=sorted(i['id'] for i in context['learning_items'] if planning_allowed(i) and i['status']!='Completed' and (i['monthly_plan_id']==monthly['id'] or i['id'] in carry_items))
+                    if item_ids:
+                        lesson_schema['monthly_item_links']['items']['properties']['item_id']['enum']=item_ids
+                    else:
+                        lesson_schema['monthly_item_links']['maxItems']=0
+                response=client.responses.create(model='gpt-5.4',reasoning={'effort':'low'},text={'format':repair_format},
                     input='Repair this daily plan ONLY to resolve the listed material findings. Preserve correct teaching and protected routines. Use exact source-backed content; never alter learning outcomes. Return the whole corrected plan, not review JSON. For EVERY linked carryover ID, include a Carryover reference line in details quoting its learning text from EVIDENCE VERBATIM (including punctuation); phases must identify and resume that actual prior task. Do not substitute a new-month topic for an unknown prior task. Each lesson needs phases [{minutes: positive integer, activity: concise description}]; phase totals equal clock duration, including setup and tidy-up. Do not duplicate phases in details. '+REVIEW_RULES+'\nTIMING CHECK: Keep each lesson time identical to its overview row. First compute end minus start; then allocate positive whole phase minutes summing to that exact number. Do not lengthen a lesson into protected blocks to fit activities.\nEVIDENCE:\n'+json.dumps(review_context(context),ensure_ascii=False)+'\nPROTECTED BLOCKS FOR THIS DATE (EXACT):\n'+json.dumps([dict(time=f'{a//60:02}:{a%60:02}–{b//60:02}:{b%60:02}',name=name) for a,b,name in protected_blocks(context)],ensure_ascii=False)+'\nFINDINGS:\n'+json.dumps(report['findings'],ensure_ascii=False)+'\nCANDIDATE:\n'+json.dumps(plan,ensure_ascii=False))
                 plan=parse_generated_plan(response.output_text,context['planning_date'])
                 plan['monthly_plan']={k:context['monthly_plan'][k] for k in ('id','title','start_date','end_date')}
