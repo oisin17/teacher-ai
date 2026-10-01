@@ -1007,3 +1007,78 @@ record, 349 historical learning item records (106 active October), zero monthly
 item outcome updates, and two outstanding free-text carryovers. Preserve all of
 these historical IDs/evidence. The transient workspace may be inaccessible after
 the environment failure; the GitHub implementation/CI/handoff are durable.
+
+### Final rubric acceptance recovery — 1 October 2026
+
+Inspected main and its latest commits, this handoff, deployed saved plans, rubric
+implementation and regression tests before continuing. No implementation was
+repeated. Tested code head: `4e474fed837c02225a23de1add7db746d00c59c1` (explicit
+start/end intervals for all timed routines; QUALITY_MODULE_VERSION 18).
+The live Friday rerun now has an explicit 09:20–09:35 Morning Meeting, with
+English beginning at 09:35. Current-release behavior is verified in production;
+the app does not expose a runtime Git SHA, so an independent exact deployed-SHA
+attestation was not available from the public UI. Do not conflate the later
+documentation-only commit with the code version exercised in these checks.
+
+103 local unittest tests passed. GitHub Actions run 36910872621 on that exact
+code head succeeded, including the Streamlit regression suite and real
+PostgreSQL 16 persistence, migration and concurrent-save checks:
+https://github.com/oisin17/teacher-ai/actions/runs/36910872621
+
+The previously accepted Thursday plan was restored and inspected, not regenerated:
+`cb2e0772b4ff457c9906712ad34d25e6`. English identifies and resumes its actual
+unfinished final activity. Gaeilge identifies the unspecified missed task before
+continuing it. History phases now include pupil research matching the linked item.
+Pack-up remains 13:50–14:00 and external Singing 14:00–14:30, with no Singing
+teaching/progress lesson. Its saved metadata records one whole-plan revision,
+three extra AI calls, 64.63 seconds for checks/repair and 24.85 seconds for initial
+generation (89.48 seconds combined AI stages, excluding storage/UI time).
+
+Friday 2 October was rerun live and accepted as
+`fdc5c01aed244cf386bf16de31347b3c`. Overview and all lesson phase totals pass
+current code checks against the exported real context. Sport is overview-only
+11:15–11:45; Art is an actual 60-minute teaching lesson 13:20–14:20, followed by
+14:20–14:30 pack-up. English 09:35–10:15 resumes the unfinished final activity.
+Gaeilge 11:45–12:25 identifies and resumes the assembly-missed task. The first
+candidate assumed a food-topic lesson was the unknown missed task; semantic review
+blocked this and the single repair corrected it. Final findings are empty and
+both carryovers are addressed in planning, still outstanding in saved learning.
+One whole-plan revision, three extra AI calls, 61.99 seconds checks/repair and
+20.39 seconds initial generation (82.38 seconds combined AI stages, excluding
+storage/UI time). These two successful plans are observations, not a benchmark
+or guaranteed response time. Browser rendering/storage waits were additional and
+were not instrumented as an end-to-end latency measurement.
+
+The live 30 September → 1 October transition was rerun in one session: September
+coverage selected on 30 September and generation disabled because genuine progress
+already exists; October coverage selected on 1 October, existing reviewed transition
+retained and both original English/Gaeilge carryovers present. No transition
+confirmation, item completion or teaching-progress action was submitted.
+
+Read-only diagnostic moved a COPY of Thursday's English lesson into protected
+Yard 11:00–11:15. Code blocked protected overlap, phase duration and the unmatched
+overview slot before semantic review. The bounded whole-plan repair returned Pass:
+one revision, two extra AI calls, 36.95 seconds checks/repair. The candidate was
+NOT saved and the diagnostic explicitly reported “Previous saved plan unchanged:
+True”. The original Thursday plan ID remains intact.
+
+The final live format-5 export was compared structurally, field by field, with
+`/workspace/scratch/teacher-ai-rubric-resume-baseline.json`, the fresh pre-rubric
+backup whose original day-plan IDs match the prior handoff. Every non-day-plan
+area matches exactly: Teacher Profile, Planning Setup, Current Learning, Actual
+Progress, monthly learning definitions, monthly item updates, period reviews,
+carryover and both original monthly documents. It retains 349 item records,
+zero item outcome events, the one genuine Actual Progress record and the two
+outstanding carryovers. Only the intentionally replaced October 1/2 day plans
+changed. No fictional teaching outcomes or classroom-data edits were saved.
+
+Remaining limits: model generation/review is nondeterministic; a bad or malformed
+candidate can remain Blocked/Unchecked after the single repair, preserving the
+previous plan. Unknown historical task content still needs teacher identification;
+the accepted recall steps do not recover information absent from stored evidence.
+Semantic review cannot guarantee classroom usefulness or catch every factual error.
+Legacy already-saved plans are readable rather than retroactively invalidated;
+Friday's earlier accepted plan contained a single-time Morning Meeting, now replaced
+by the explicit-interval rerun. A genuine classroom progress save remains teacher
+acceptance work. Exact runtime-SHA display and complete browser/storage latency
+instrumentation are not implemented; do not report either as measured.
