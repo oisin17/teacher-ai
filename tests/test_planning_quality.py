@@ -96,6 +96,23 @@ class QualityTests(unittest.TestCase):
         c['carryover']=[dict(id='carry',state='outstanding')];client.responses.create.return_value=review()
         with self.assertRaises(ValueError):evaluate_candidate(p,c,client)
 
+    def test_quote_wrappers_and_whitespace_preserve_evidence_verification(self):
+        from planning_quality import verifiable_quote
+        evidence={'source':'How to Organise\na Horse Show'}
+        self.assertTrue(verifiable_quote('"How to Organise a Horse Show"',evidence))
+        self.assertFalse(verifiable_quote('How to Organise a Dog Show',evidence))
+        self.assertFalse(verifiable_quote('How to … Horse Show',evidence))
+
+    def test_canonical_reference_does_not_authorise_unrelated_carryover(self):
+        c=context();c['carryover']=[dict(id='carry',state='outstanding',learning='Prior final activity unfinished.')]
+        p=candidate(c);p['lessons'][0]['carryover_ids']=['carry']
+        f=dict(code='invalid_scope',severity='Blocked',lesson_index=0,message='Maths phases do not resume prior English task',evidence=p['lessons'][0]['topic'])
+        client=Mock();client.responses.create.side_effect=[review([f],[dict(id='carry',decision='addressed',reason='Linked but unrelated phases')]),SimpleNamespace(output_text=json.dumps({k:p[k] for k in ('overview','lessons')})),review([f],[dict(id='carry',decision='addressed',reason='Still unrelated phases')])]
+        with self.assertRaises(QualityFailure) as raised:quality_gate(p,c,client,{})
+        self.assertEqual(raised.exception.report['state'],'Blocked')
+        self.assertNotIn('Confirmed carryover reference',p['lessons'][0]['details'])
+        self.assertEqual(c['carryover'][0]['state'],'outstanding')
+
     def test_date_boundary_and_all_item_state_blockers(self):
         from monthly_learning import fingerprint
         c=context();p=candidate(c);p['planning_date']='2026-09-30'
