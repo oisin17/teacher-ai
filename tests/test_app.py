@@ -43,8 +43,15 @@ class AppTests(unittest.TestCase):
             if kwargs['text']['format']['name'] == 'planning_quality_review':
                 import json
                 from planning_quality import CATEGORIES
-                context=json.loads(kwargs['input'].split('\nEVIDENCE:\n',1)[1].split('\nCANDIDATE:\n',1)[0])
-                plan=json.loads(kwargs['input'].split('\nCANDIDATE:\n',1)[1])
+                def unwrap(value):
+                    if isinstance(value,dict):
+                        if set(value)=={'evidence_id','text'}:return value['text']
+                        if set(value)=={'passages'}:return ''.join(unwrap(v) for v in value['passages'])
+                        return {k:unwrap(v) for k,v in value.items()}
+                    if isinstance(value,list):return [unwrap(v) for v in value]
+                    return value
+                packet=unwrap(json.loads(kwargs['input'].split('SOURCE-REFERENCED PACKET:')[1].split('\n',1)[1]))
+                context=packet['context'];plan=packet['candidate']
                 linked={id for l in plan['lessons'] for id in l.get('carryover_ids',[])}
                 return SimpleNamespace(output_text=json.dumps(dict(checked_categories=list(CATEGORIES),findings=[],carryover_decisions=[dict(id=c['id'],decision='addressed' if c['id'] in linked else 'deferred',reason='Appropriate next subject slot after fixed routines') for c in context['carryover'] if c['state']=='outstanding'])))
             return self.client.responses.create.return_value

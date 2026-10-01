@@ -113,6 +113,25 @@ class QualityTests(unittest.TestCase):
         self.assertNotIn('Confirmed carryover reference',p['lessons'][0]['details'])
         self.assertEqual(c['carryover'][0]['state'],'outstanding')
 
+    def test_model_evidence_references_resolve_to_original_text(self):
+        c=context();p=candidate(c);client=Mock()
+        def respond(**kwargs):
+            packet=json.loads(kwargs['input'].split('SOURCE-REFERENCED PACKET:')[1].split('\n',1)[1])
+            reference=packet['candidate']['lessons'][0]['topic']['evidence_id']
+            schema=kwargs['text']['format']['schema']['properties']['findings']['items']
+            self.assertIn(reference,schema['properties']['evidence_id']['enum'])
+            return SimpleNamespace(output_text=json.dumps(dict(checked_categories=list(CATEGORIES),findings=[dict(code='lesson_quality',severity='Revise',lesson_index=0,message='Material quality issue',evidence_id=reference)],carryover_decisions=[])))
+        client.responses.create.side_effect=respond
+        report,_=evaluate_candidate(p,c,client)
+        self.assertEqual(report['findings'][0]['evidence'],p['lessons'][0]['topic'])
+        self.assertNotIn('evidence_id',report['findings'][0])
+
+    def test_unknown_model_evidence_reference_fails_closed(self):
+        c=context();p=candidate(c);client=Mock()
+        client.responses.create.return_value=SimpleNamespace(output_text=json.dumps(dict(checked_categories=list(CATEGORIES),findings=[dict(code='lesson_quality',severity='Revise',lesson_index=0,message='Untrusted finding',evidence_id='unknown')],carryover_decisions=[])))
+        with self.assertRaises(QualityFailure) as raised:quality_gate(p,c,client,{})
+        self.assertEqual(raised.exception.report['state'],'Unchecked')
+
     def test_date_boundary_and_all_item_state_blockers(self):
         from monthly_learning import fingerprint
         c=context();p=candidate(c);p['planning_date']='2026-09-30'
