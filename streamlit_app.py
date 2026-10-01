@@ -4,6 +4,7 @@ import io
 import hashlib
 from uuid import uuid4
 from monthly_plans import suggest_dates
+from timetable_constraints import singing_day, validate_protected_plan
 import importlib
 import carryover
 if not hasattr(carryover, "retain_explicit_links"):
@@ -371,7 +372,8 @@ if page == "Today":
         st.caption("Progress is already saved for this date. You can update it below or in Progress History.")
     if st.button("✨ Generate Today's Plan", type="primary", disabled=day_state["progress"] is not None or selected_monthly is None or needs_review):
 
-        teacher_profile = st.session_state.get("teacher_profile", {})
+        teacher_profile = load_teacher_profile()
+        st.session_state["teacher_profile"] = teacher_profile
         planning_setup = storage_call(store.load_document, "planning_setup")
 
         timetable_text = planning_setup.get("timetable_text", "")
@@ -410,6 +412,8 @@ if page == "Today":
                             "4. Yearly Plan if available\n\n"
 
                             "IMPORTANT RULES:\n"
+                            + ("- PROTECTED THURSDAY: external teacher Singing 14:00–14:30 is fixed, overrides uploaded timetable/monthly coverage, and must appear in the overview only. Do not derive Singing content from the Monthly Plan or add it to lesson progress. Finish ALL normal teaching by 14:00. Schedule pack-up/tidy-up 13:50–14:00 before Singing; school finishes at 14:30, with no second pack-up slot.\n" if singing_day(teacher_profile, planning_date.isoformat()) else "")
+                            +
                             f"- The day being planned is {planning_day}.\n"
                             "- If a weekly timetable has been supplied, follow it for this day unless the teacher has explicitly provided a temporary change.\n"
                             "- If no weekly timetable has been supplied, construct a practical timetable for the day using the Teacher Profile, recurring routines, fixed arrangements, current Monthly Plan and curriculum requirements.\n"
@@ -507,6 +511,7 @@ if page == "Today":
                     )
 
                     generated_plan = parse_generated_plan(response.output_text, planning_date.isoformat())
+                    validate_protected_plan(generated_plan, teacher_profile)
                     retain_explicit_links(generated_plan, outstanding_carryover)
                     generated_plan["monthly_plan"] = {key: selected_monthly[key] for key in ("id", "title", "start_date", "end_date")}
                     storage_call(store.save_day_plan, generated_plan)
@@ -899,6 +904,8 @@ elif page == "Teacher Profile":
         value=saved_profile.get("recurring_arrangements", ""),
         height=120
     )
+    thursday_singing = st.checkbox("Thursday Singing with external teacher, 14:00–14:30 (protected)",
+                                   value=saved_profile.get("thursday_singing", False))
 
     st.divider()
 
@@ -932,7 +939,8 @@ elif page == "Teacher Profile":
             "teaching_notes": teaching_notes,
             "irish_exemptions": irish_exemptions,
             "differentiation": differentiation,
-            "recurring_arrangements": recurring
+            "recurring_arrangements": recurring,
+            "thursday_singing": thursday_singing
         }
 
         save_teacher_profile(profile)

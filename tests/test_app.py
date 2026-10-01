@@ -74,6 +74,26 @@ class AppTests(unittest.TestCase):
         self.assertEqual(len(app.error), 0)
         return app
 
+    def test_thursday_generation_cannot_overwrite_singing(self):
+        import json
+        self.store.save_document("teacher_profile", {"class_level": "5th Class", "thursday_singing": True})
+        previous = sample_plan("2026-10-01")
+        self.store.save_day_plan(previous)
+        self.client.responses.create.return_value = SimpleNamespace(output_text=generation_output())
+        app = self.new_app()
+        app.date_input[0].set_value(date(2026, 10, 1)).run()
+        self.button(app, "✨ Generate Today's Plan").click().run()
+        self.assertEqual(len(app.error), 1)
+        self.assertEqual(self.store.load_day("2026-10-01")["plan"], previous)
+        self.assertIn("PROTECTED THURSDAY", self.client.responses.create.call_args.kwargs["input"])
+        output = json.loads(generation_output())
+        output["lessons"] = [l for l in output["lessons"] if l["time"] < "13:00"]
+        output["overview"] = "13:50–14:00 Pack up / tidy up\n14:00–14:30 Singing — external teacher"
+        self.client.responses.create.return_value = SimpleNamespace(output_text=json.dumps(output))
+        self.button(app, "✨ Generate Today's Plan").click().run()
+        self.assertEqual(len(app.error), 0)
+        self.assertIn("Singing", self.store.load_day("2026-10-01")["plan"]["overview"])
+
     def test_linked_completion_and_manual_controls(self):
         import json
         october = self.store.select_monthly_plan("2026-10-01")
