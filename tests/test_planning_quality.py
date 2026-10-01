@@ -105,6 +105,20 @@ class QualityTests(unittest.TestCase):
         result=quality_gate(p,c,client,{})
         self.assertEqual(result['planning_quality']['state'],'Pass');self.assertEqual(c['carryover'][0]['state'],'outstanding')
 
+    def test_review_schema_requires_every_outstanding_carryover_decision(self):
+        c=context(); c['carryover']=[dict(id='carry',state='outstanding',learning='Finish final activity')]
+        p=candidate(c); client=Mock()
+        def respond(**kwargs):
+            schema=kwargs['text']['format']['schema']['properties']['carryover_decisions']
+            self.assertEqual(schema['required'],['carry'])
+            self.assertFalse(schema['additionalProperties'])
+            return SimpleNamespace(output_text=json.dumps(dict(checked_categories=list(CATEGORIES),findings=[],carryover_decisions={'carry':dict(decision='deferred',reason='Protected Sport reduces available English writing time; next writing slot.')})))
+        client.responses.create.side_effect=respond
+        result=quality_gate(p,c,client,{})
+        self.assertEqual(result['planning_quality']['state'],'Pass')
+        self.assertEqual(result['planning_quality']['carryover_decisions'][0]['id'],'carry')
+        self.assertEqual(c['carryover'][0]['state'],'outstanding')
+
     def test_unchecked_is_fail_closed(self):
         c=context();p=candidate(c)
         for output in ('bad json',json.dumps(dict(checked_categories=[],findings=[],carryover_decisions=[]))):
@@ -180,4 +194,3 @@ class QualityTests(unittest.TestCase):
         self.assertIn('overview_overlap',{f['code'] for f in code_checks(p,c)})
         p=candidate(c);p['lessons'][0]['phases'][0]['minutes']=True
         self.assertIn('phase_duration',{f['code'] for f in code_checks(p,c)})
-

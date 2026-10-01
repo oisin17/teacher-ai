@@ -9,7 +9,7 @@ from timetable_constraints import interval, TIME_RANGE, singing_day
 from monthly_learning import planning_allowed, fingerprint
 
 RUBRIC_VERSION = 1
-QUALITY_MODULE_VERSION = 10
+QUALITY_MODULE_VERSION = 11
 CATEGORIES = ('alignment', 'progression', 'timetable', 'lesson_quality', 'practicality', 'specificity', 'usability')
 STATES = ('Pass', 'Revise', 'Blocked', 'Unchecked')
 HARD_CODES = ('unsupported_content', 'invalid_scope', 'unfinished_contradiction', 'completed_repetition', 'broad_completion', 'held_scope', 'unavailable_resource', 'missing_essential')
@@ -234,6 +234,17 @@ def evaluate_candidate(plan, context, client):
     properties.pop('evidence')
     properties['evidence_id']={'type':'string','enum':list(references)}
     review_format['schema']['properties']['findings']['items']['required'][-1]='evidence_id'
+    outstanding = {c['id'] for c in context['carryover'] if c['state']=='outstanding'}
+    if outstanding:
+        # Require one explicit decision for every known ID in the response
+        # schema, rather than hoping an unconstrained array includes them all.
+        decision_schema = {'type':'object','additionalProperties':False,'properties':{
+            'decision':{'type':'string','enum':['addressed','deferred']},
+            'reason':{'type':'string'}},'required':['decision','reason']}
+        review_format['schema']['properties']['carryover_decisions'] = {
+            'type':'object','additionalProperties':False,
+            'properties':{id:copy.deepcopy(decision_schema) for id in sorted(outstanding)},
+            'required':sorted(outstanding)}
     response = client.responses.create(model='gpt-5.4-mini',text={'format':review_format},max_output_tokens=3500,
         input=REVIEW_RULES+'\nSOURCE-REFERENCED PACKET: each text has an evidence_id; long text has ordered contiguous passages. Select the evidence_id of the actual passage supporting each finding. Never retype/paraphrase evidence. IDs refer to passages only, not learning item IDs.\n'+json.dumps(packet,ensure_ascii=False))
     report = json.loads(response.output_text)
@@ -251,7 +262,9 @@ def evaluate_candidate(plan, context, client):
         if f['severity'] not in ('Blocked','Revise') or not f['message'].strip() or not f['evidence'].strip() or not verifiable_quote(f['evidence'],evidence) or not -1 <= f['lesson_index'] < len(plan['lessons']):
             raise ValueError(f"Unverifiable rubric finding ({f['code']}, lesson index {f['lesson_index']}): {f['evidence'][:200]}")
     decisions = report['carryover_decisions']
-    outstanding = {c['id'] for c in context['carryover'] if c['state']=='outstanding'}
+    if isinstance(decisions,dict):
+        decisions = [dict(id=id,**decision) for id,decision in decisions.items()]
+        report['carryover_decisions'] = decisions
     if len(decisions) != len(outstanding) or {d['id'] for d in decisions} != outstanding:
         raise ValueError('Incomplete carryover review')
     for d in decisions:
@@ -391,4 +404,3 @@ def quality_gate(plan, context, client, generation_format):
     except Exception as e:
         raise QualityFailure('Planning checks could not be completed. Your previous saved plan is unchanged.',
             {'version':RUBRIC_VERSION,'state':'Unchecked','revision_count':revisions,'extra_ai_calls':calls,'latency_seconds':round(time.perf_counter()-start,2),'findings':initial,'failure_reason':str(e) if isinstance(e,ValueError) else type(e).__name__}) from e
-
