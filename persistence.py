@@ -200,6 +200,7 @@ class Store:
             if item["state"] == "outstanding" and item["id"] in finished:
                 item["state"] = "completed"
                 item["completed_date"] = finished[item["id"]]
+                item["completion_source"] = "lesson"
         return [item for item in items if not as_of or item["created_date"] <= as_of]
 
     def list_carryover(self, as_of=None):
@@ -222,6 +223,8 @@ class Store:
     def save_period_review(self, monthly, selected_date, items, confirmed=False):
         try:
             school_date(selected_date)
+            if not monthly["start_date"] <= selected_date <= monthly["end_date"]:
+                raise ValueError("Review date outside confirmed period")
             if confirmed is not True or not isinstance(items, list) or len(items) > 20:
                 raise ValueError("Explicit confirmation required")
             for item in items:

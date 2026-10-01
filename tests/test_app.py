@@ -99,6 +99,12 @@ class AppTests(unittest.TestCase):
         app.run()
         self.button(app, "Mark complete").click().run()
         self.assertEqual(next(i for i in self.store.list_carryover() if i["id"] == "manual")["state"], "completed")
+        self.button(app, "Reopen item").click().run()
+        self.assertEqual(next(i for i in self.store.list_carryover() if i["id"] == "manual")["state"], "outstanding")
+        self.button(app, "Remove").click().run()
+        self.assertEqual(next(i for i in self.store.list_carryover() if i["id"] == "manual")["state"], "removed")
+        self.button(app, "Restore item").click().run()
+        self.assertEqual(next(i for i in self.store.list_carryover() if i["id"] == "manual")["state"], "outstanding")
 
     def test_transition_review_suggestions_manual_items_and_no_repeat(self):
         import json

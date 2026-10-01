@@ -231,6 +231,10 @@ def carryover_controls(items):
                 if completed or removed:
                     storage_call(store.set_carryover_state, item["id"], "completed" if completed else "removed")
                     st.rerun()
+            elif item["state"] == "completed" and item.get("completion_source") != "lesson":
+                if st.button("Reopen item", key=f"reopen_{item['id']}"):
+                    storage_call(store.set_carryover_state, item["id"], "outstanding")
+                    st.rerun()
             elif item["state"] == "removed":
                 if st.button("Restore item", key=f"restore_{item['id']}"):
                     storage_call(store.set_carryover_state, item["id"], "outstanding")

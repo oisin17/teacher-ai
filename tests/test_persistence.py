@@ -77,6 +77,24 @@ class StoreTests(unittest.TestCase):
         self.patcher.stop()
         self.temp.cleanup()
 
+    def test_review_confirmation_date_guard_and_concurrent_once(self):
+        self.store.save_monthly_plan(self.monthly(), True)
+        monthly = self.monthly("oct", "2026-10-01", "2026-10-31")
+        self.store.save_monthly_plan(monthly, True)
+        with self.assertRaises(StorageError):
+            self.store.save_period_review(monthly, "2026-10-01", [])
+        with self.assertRaises(StorageError):
+            self.store.save_period_review(monthly, "2026-09-30", [], True)
+        def save(_):
+            try:
+                self.store.save_period_review(monthly, "2026-10-01", [], True)
+                return True
+            except StorageError:
+                return False
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            self.assertEqual(sum(pool.map(save, range(4))), 1)
+        self.assertTrue(self.store.carryover_context(monthly, "2026-10-02")["review"]["nothing_selected"])
+
     def test_carryover_backup_roundtrip(self):
         self.carry_setup()
         backup = self.store.export_backup()
