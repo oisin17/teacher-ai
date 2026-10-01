@@ -28,6 +28,7 @@ DOCUMENTS = {
     "current_learning_position": "position_data",
 }
 LOCK_ID = 73190421
+PERSISTENCE_VERSION = 7
 
 
 from monthly_learning import LearningStore, validate_item as validate_learning_item, validate_update, MARKER
@@ -236,7 +237,7 @@ class Store(LearningStore):
             position = before_date(json.loads(row_position[0]) if row_position else {}, prior["end_date"] if prior else selected_date)
             return {"previous": prior, "review": json.loads(row[0]) if row else None,
                     "history": history[-10:], "position": position,
-                    "unfinished_items": [i for i in self._learning(connection, selected_date) if prior and i["monthly_plan_id"] == prior["id"] and not i["archived"] and i["status"] != "Completed"],
+                    "unfinished_items": [i for i in self._learning(connection, selected_date) if prior and i["monthly_plan_id"] == prior["id"] and not i["archived"] and (i["status"] == "In progress" or i["id"] in {link["item_id"] for r in history for lesson in r.get("lessons", []) if lesson["status"] != "Completed" for link in lesson.get("monthly_item_links", [])})][:6],
                     "items": self._carryover(connection, selected_date)}
 
     def save_period_review(self, monthly, selected_date, items, confirmed=False):

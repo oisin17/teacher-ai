@@ -28,7 +28,7 @@ if refresh_lessons:
 import persistence
 # Streamlit hot reload can retain the previous imported storage module.
 # Reload only when that cached module lacks this rollout's additive API.
-if refresh_lessons or not hasattr(persistence.Store, "list_learning_items"):
+if refresh_lessons or getattr(persistence, "PERSISTENCE_VERSION", None) != 7:
     importlib.reload(persistence)
 from persistence import Store, StorageError
 import json
