@@ -4,10 +4,18 @@ import json
 from uuid import uuid4
 from datetime import date
 
-LEARNING_VERSION = 2
+LEARNING_VERSION = 3
 STATUSES = ('Not started', 'In progress', 'Completed')
 TYPES = ('discrete', 'recurring', 'broad')
 MARKER = '\n\nConfirmed Monthly Plan item evidence:\n'
+
+
+def display_wording(item):
+    return item.get('display_correction') or item['description']
+
+
+def planning_allowed(item):
+    return not item['archived'] and not item.get('requires_clarification', False)
 
 
 def fingerprint(text):
@@ -20,6 +28,8 @@ def validate_item(item):
             raise ValueError('Incomplete learning item')
     if item.get('type') not in TYPES or not isinstance(item.get('archived'), bool):
         raise ValueError('Invalid learning item type/state')
+    if not isinstance(item.get('requires_clarification', False), bool) or not isinstance(item.get('display_correction', ''), str) or len(item.get('display_correction', '')) > 1000:
+        raise ValueError('Invalid clarification/display correction')
     if item.get('sources') and (not isinstance(item['sources'], list) or any(not isinstance(q, str) for q in item['sources'])):
         raise ValueError('Invalid source passages')
     if len(item['description']) > 1000 or len(item['source']) > 6000:
@@ -97,6 +107,8 @@ class LearningStore:
                 if any(id not in catalogue or catalogue[id]['monthly_plan_id'] != monthly['id'] for id in parents):
                     raise StorageError('Invalid split or merge source.')
                 old = existing.get(i['id'])
+                if old and (old['source'] != i['source'] or old.get('sources', []) != i.get('sources', [])):
+                    raise StorageError('Original source quotations cannot be edited. Correct display wording instead.')
                 if old and old.get('revision', 0) != i.get('revision', 0):
                     raise StorageError('Learning items changed in another session. Refresh before editing.')
                 if old and (old['monthly_plan_id'] != i['monthly_plan_id'] or old['fingerprint'] != i['fingerprint']):
@@ -117,6 +129,87 @@ class LearningStore:
                             carry['state'] = 'removed'
                         connection.execute('UPDATE carryover_items SET item_data = %s WHERE id = %s', (json.dumps(carry), carry['id']))
 
+            self._project_position(connection)
+
+    def apply_reviewed_regrouping(self, monthly, bundle, confirmed=False):
+        """Apply reviewed scope changes atomically; never copy parent outcomes."""
+        from persistence import StorageError
+        if confirmed is not True:
+            raise StorageError('Confirm the reviewed regrouping before applying it.')
+        try:
+            expected = bundle['expected_items']
+            desired = bundle['items']
+            if bundle['monthly_plan_id'] != monthly['id'] or not desired or len(desired) > 500 or len({i['id'] for i in desired}) != len(desired):
+                raise ValueError('Invalid reviewed item set')
+            for i in desired:
+                validate_item(i)
+                if i['monthly_plan_id'] != monthly['id'] or i['fingerprint'] != fingerprint(monthly['plan_text']) or i['source'] not in monthly['plan_text'] or any(q not in monthly['plan_text'] for q in i.get('sources', [])):
+                    raise ValueError('Invalid source evidence')
+        except (KeyError, ValueError, TypeError):
+            raise StorageError('The reviewed regrouping file is invalid. Nothing has changed.') from None
+        with self._connection() as connection:
+            self._lock(connection)
+            if next((p for p in self._monthly(connection) if p['id'] == monthly['id']), None) != monthly:
+                raise StorageError('The Monthly Plan changed. Take a fresh backup and review again.')
+            current = [i for i in self._learning(connection) if i['monthly_plan_id'] == monthly['id']]
+            canonical = lambda values: json.dumps(sorted(values, key=lambda i: i['id']), sort_keys=True)
+            if canonical(current) != canonical(expected):
+                raise StorageError('Item revisions or progress changed. Take a fresh backup and review again.')
+            current_ids = {i['id'] for i in current}
+            events = [e for e in self._learning_events(connection) if e['item_id'] in current_ids]
+            raw_carry = [json.loads(r[0]) for r in connection.execute('SELECT item_data FROM carryover_items ORDER BY id').fetchall()]
+            if canonical(events) != canonical(bundle.get('expected_updates', [])) or canonical(raw_carry) != canonical(bundle.get('expected_carryover', [])):
+                raise StorageError('Progress or carryover changed. Take a fresh backup and review again.')
+            old = {i['id']: i for i in self._learning_raw(connection) if i['id'] in current_ids}
+            new = {i['id']: i for i in desired}
+            if not current_ids <= set(new):
+                raise StorageError('Historical IDs must be retained, not deleted.')
+            all_ids = {i['id'] for i in self._learning_raw(connection)}
+            replacements = {}
+            for id, item in new.items():
+                if id in old:
+                    for field in ('source', 'sources', 'fingerprint', 'monthly_plan_id'):
+                        if item.get(field) != old[id].get(field):
+                            raise StorageError('Original source evidence must remain unchanged.')
+                    if old[id]['archived'] and not item['archived']:
+                        raise StorageError('Regrouping cannot silently restore historical originals.')
+                else:
+                    if id in all_ids:
+                        raise StorageError('A replacement ID already exists.')
+                    for parent in item.get('replacement_from', []):
+                        if parent not in old or not new[parent]['archived']:
+                            raise StorageError('Replacement parents must be known archived originals.')
+                        replacements.setdefault(parent, []).append(id)
+            # Carryover with a one-to-many split needs explicit scope selection.
+            # Keep that priority as free text pending teacher linking, never drop it.
+            seen = set()
+            for carry in raw_carry:
+                parent = carry.get('monthly_item_id')
+                if parent not in current_ids:
+                    continue
+                if new[parent]['archived']:
+                    candidates = replacements.get(parent, [])
+                    previous_state = next(c['state'] for c in self._carryover(connection) if c['id'] == carry['id'])
+                    carry['previous_monthly_item_id'] = parent
+                    if len(candidates) == 1 and previous_state == 'outstanding':
+                        carry['monthly_item_id'] = candidates[0]
+                    else:
+                        carry.pop('monthly_item_id', None)
+                        carry['candidate_monthly_item_ids'] = candidates
+                        carry['link_requires_review'] = True
+                    carry['state'] = previous_state
+                linked = carry.get('monthly_item_id')
+                if linked and carry['state'] == 'outstanding':
+                    if linked in seen:
+                        carry['state'] = 'removed'
+                        carry['duplicate_of_monthly_item_id'] = linked
+                    seen.add(linked)
+                connection.execute('UPDATE carryover_items SET item_data = %s WHERE id = %s', (json.dumps(carry, ensure_ascii=False), carry['id']))
+            for id, item in new.items():
+                item = {k: v for k, v in item.items() if k not in ('status', 'remaining', 'evidence', 'last_date')}
+                item['revision'] = old.get(id, {}).get('revision', 0) + 1
+                connection.execute('INSERT INTO monthly_learning_items (id, item_data) VALUES (%s, %s) ON CONFLICT (id) DO UPDATE SET item_data = EXCLUDED.item_data', (id, json.dumps(item, ensure_ascii=False)))
+            # Item outcome events and lesson snapshots are deliberately untouched.
             self._project_position(connection)
 
     def correct_learning_item(self, item_id, status, remaining, evidence, confirmed):

@@ -1,9 +1,9 @@
 """Optional item review and exception-only daily outcomes."""
-MODULE_VERSION = 6
+MODULE_VERSION = 7
 import json
 from uuid import uuid4
 import streamlit as st
-from monthly_learning import TYPES, STATUSES, fingerprint
+from monthly_learning import TYPES, STATUSES, fingerprint, display_wording
 
 
 def extract_items(client, monthly):
@@ -18,7 +18,7 @@ def extract_items(client, monthly):
                 'required': ['subject', 'description', 'type', 'source_index']}}}, 'required': ['items']}}
     response = client.responses.create(model='gpt-5.4-mini', text={'format': schema}, input=(
         'Extract independently trackable learning items from this monthly plan. Subject MUST be the actual curriculum subject (English, History, etc.), NEVER a strand, topic, skill or heading like Vocabulary, Money or The Great Irish Famine. '
-        'CRITICAL GRANULARITY: one separately checkable learning result per item. Never bundle a whole subject/topic section into one item. Split distinct objectives and activities even when they share a topic. For example, Famine causes/events, effects, push/pull factors, analysing immigrant letters, writing an immigrant letter, and creating/presenting a project need separate items when supplied. Procedural writing and morphology are English items, not subject names. Deduplicate an objective with its matching activity, but do not merge different activities into one broad summary. Do not create a duplicate overarching topic item when its discrete items already cover it. '
+        'CRITICAL GRANULARITY: one meaningful independently teachable and assessable learning scope per item. Group worksheets, games, brainstorms, modelling, peer checklists and repeated practice with the learning they support; NEVER create separate completion obligations for these methods, assessment or grouping arrangements. Deduplicate matching objectives and activities. Keep genuinely distinct named reading texts, root families, spoken/written products and learning outcomes distinguishable; do not bundle an entire subject/topic. For example, Famine causes/events, effects, primary-source analysis and writing an immigrant letter are distinct learning. Within one artwork, background/perspective steps are criteria for that artwork, not separate items. Cover every explicitly supplied poem, novel pre-reading, reading-log sequence and grammar focus; preserve uncertain names/scopes without invention. No target item count. '
         'Use type discrete for a finite task, recurring for repeated practice, broad for ongoing objectives. '
         'Do not infer past progress. Set source_index to the numbered original document line that explicitly supports this item. '
         'Keep descriptions concise; cover all subjects. No invented pages or tasks.\n' +
@@ -43,6 +43,25 @@ def review_items(store, client, monthly, call):
     for subject in sorted({i['subject'] for i in saved if not i['archived']}):
         items = [i for i in saved if i['subject'] == subject and not i['archived']]
         st.write(f"**{subject}** — " + ' · '.join(f"{sum(i['status'] == status for i in items)} {status.lower()}" for status in reversed(STATUSES)))
+    held = [i for i in saved if not i['archived'] and i.get('requires_clarification')]
+    for i in held:
+        st.info('Awaiting teacher clarification — excluded from planning priorities: ' + display_wording(i))
+    with st.expander('Apply a reviewed regrouping file'):
+        uploaded = st.file_uploader('Reviewed regrouping JSON', type=['json'], key='regroup_file_' + monthly['id'])
+        if uploaded is not None:
+            try:
+                bundle = json.loads(uploaded.getvalue())
+                active = [i for i in bundle['items'] if not i['archived']]
+                st.caption('Historical IDs and lessons are retained. New scopes start Not started; parent completion is not copied.')
+                for subject in sorted({i['subject'] for i in active}):
+                    st.write(f"{subject}: {sum(i['subject'] == subject for i in active)} reviewed items")
+                confirmed = st.checkbox('Apply this teacher-approved regrouping', key='regroup_confirm_' + monthly['id'])
+                if st.button('Apply reviewed regrouping', key='regroup_apply_' + monthly['id']):
+                    call(store.apply_reviewed_regrouping, monthly, bundle, confirmed)
+                    st.success('Reviewed regrouping saved. Historical teaching records were preserved.')
+                    st.rerun()
+            except (ValueError, KeyError, TypeError):
+                st.error('Choose a valid reviewed regrouping file.')
     key = 'learning_review_' + monthly['id'] + fingerprint(monthly['plan_text'])[:12] + fingerprint(json.dumps(saved, sort_keys=True))[:12]
     changed_document = any(i['fingerprint'] != fingerprint(monthly['plan_text']) and not i['archived'] for i in saved)
     if changed_document:
@@ -64,19 +83,25 @@ def review_items(store, client, monthly, call):
         with st.form(key + '_form'):
             edited = []
             for item in drafts:
-                with st.expander(f"{item['subject']} — {item['description']} ({item.get('status', 'Not started')})"):
+                with st.expander(f"{item['subject']} — {display_wording(item)} ({item.get('status', 'Not started')})"):
                     st.caption('Source: ' + item['source'])
                     subject = st.text_input('Subject', value=item['subject'], key=key + item['id'] + 'subject')
                     description = st.text_area('Learning item', value=item['description'], max_chars=1000, key=key + item['id'] + 'desc')
                     kind = st.selectbox('Item type', TYPES, index=TYPES.index(item['type']), key=key + item['id'] + 'type')
+                    clarification = st.checkbox('Requires teacher clarification before planning', value=item.get('requires_clarification', False), key=key + item['id'] + 'clarification')
+                    correction = st.text_input('Display correction (optional; original source stays unchanged)', value=item.get('display_correction', ''), max_chars=1000, key=key + item['id'] + 'display')
+                    correction_confirmed = st.checkbox('I confirm this display correction', value=False, key=key + item['id'] + 'display_confirm')
+                    if correction != item.get('display_correction', '') and not correction_confirmed:
+                        correction = item.get('display_correction', '')
+                        st.caption('Confirm a changed display correction before saving it.')
                     archived = st.checkbox('Archived (uncheck to restore)', value=item['archived'], key=key + item['id'] + 'archive')
                     split = st.text_area('Split into new items (optional; one per line)', key=key + item['id'] + 'split', help='Archives this item; new items receive new IDs and start Not started.')
-                    edited.append({**item, 'subject': subject, 'description': description, 'type': kind, 'archived': archived or bool(split.strip())})
+                    edited.append({**item, 'subject': subject, 'description': description, 'type': kind, 'requires_clarification': clarification, 'display_correction': correction, 'archived': archived or bool(split.strip())})
                     for line in split.splitlines():
                         if line.strip():
                             edited.append({**item, 'id': uuid4().hex, 'revision': 0, 'split_from': item['id'], 'description': line.strip(), 'archived': False})
             active = [i for i in drafts if not i['archived']]
-            merge = st.multiselect('Merge duplicate / overlapping items', [i['id'] for i in active], format_func=lambda id: next(i['subject'] + ' — ' + i['description'] for i in active if i['id'] == id), key=key + '_merge')
+            merge = st.multiselect('Merge duplicate / overlapping items', [i['id'] for i in active], format_func=lambda id: next(i['subject'] + ' — ' + display_wording(i) for i in active if i['id'] == id), key=key + '_merge')
             merged_description = st.text_input('Merged item description', key=key + '_merged_text')
             save = st.form_submit_button('Save learning items', type='primary')
         if save:
@@ -97,7 +122,7 @@ def review_items(store, client, monthly, call):
             st.rerun()
     if saved:
         with st.expander('Correct an item status or remaining learning'):
-            selected_id = st.selectbox('Item to correct', [i['id'] for i in saved], format_func=lambda id: next(i['subject'] + ' — ' + i['description'] for i in saved if i['id'] == id), key=key + '_correct')
+            selected_id = st.selectbox('Item to correct', [i['id'] for i in saved], format_func=lambda id: next(i['subject'] + ' — ' + display_wording(i) for i in saved if i['id'] == id), key=key + '_correct')
             item = next(i for i in saved if i['id'] == selected_id)
             with st.form(key + selected_id + '_correction'):
                 status = st.selectbox('Item status', STATUSES, index=STATUSES.index(item['status']))
@@ -118,7 +143,7 @@ def item_inputs(lesson, prefix, items):
         item = items.get(link['item_id'])
         if not item:
             continue
-        with st.expander(f"Monthly item: {item['description']} · {item['status']}"):
+        with st.expander(f"Monthly item: {display_wording(item)} · {item['status']}"):
             st.caption(f"{item['type']} · Lesson addresses: {link['coverage']}")
             st.caption('Default: taught work becomes In progress; Not taught changes nothing. Change only exceptions. Save accepts these item outcomes.')
             key = prefix + lesson['lesson_id'] + item['id']
@@ -143,7 +168,7 @@ def item_inputs(lesson, prefix, items):
 def suggest_outcomes(client, lessons, items):
     noted = [lesson for lesson in lessons if lesson['note'].strip() and lesson['status'] != 'Not taught']
     linked = {link['item_id'] for lesson in noted for link in lesson.get('monthly_item_links', [])}
-    source = [{'item_id': i['id'], **{k: i[k] for k in ('subject', 'description', 'type', 'status', 'remaining')}} for i in items.values() if i['id'] in linked]
+    source = [{'item_id': i['id'], 'description': display_wording(i), **{k: i[k] for k in ('subject', 'type', 'status', 'remaining')}} for i in items.values() if i['id'] in linked]
     snapshots = [{k: lesson.get(k, []) for k in ('lesson_id', 'subject', 'learning_intention', 'status', 'note', 'monthly_item_links')} for lesson in noted]
     if not linked:
         return {}

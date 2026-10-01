@@ -28,10 +28,10 @@ DOCUMENTS = {
     "current_learning_position": "position_data",
 }
 LOCK_ID = 73190421
-PERSISTENCE_VERSION = 9
+PERSISTENCE_VERSION = 10
 
 
-from monthly_learning import LearningStore, validate_item as validate_learning_item, validate_update, MARKER
+from monthly_learning import LearningStore, validate_item as validate_learning_item, validate_update, MARKER, planning_allowed, display_wording
 
 
 class Store(LearningStore):
@@ -207,7 +207,7 @@ class Store(LearningStore):
             if item.get('monthly_item_id'):
                 linked = learning.get(item['monthly_item_id'])
                 if linked:
-                    item['learning'] = (linked['remaining'] or linked['description'])[:300]
+                    item['learning'] = (linked['remaining'] or display_wording(linked))[:300]
                     item['subject'] = linked['subject']
                     if linked['archived']:
                         item['state'] = 'removed'
@@ -286,7 +286,7 @@ class Store(LearningStore):
             if item.get('monthly_item_id') and (state == 'completed' or (state == 'outstanding' and item['state'] == 'completed')):
                 linked = next(i for i in self._learning(connection) if i['id'] == item['monthly_item_id'])
                 from uuid import uuid4
-                event = dict(id=uuid4().hex, item_id=linked['id'], status='Completed' if state == 'completed' else 'In progress', remaining='' if state == 'completed' else linked['description'], evidence='Teacher manually changed linked carryover', confirmed_complete=state == 'completed', manual=True, date=date.today().isoformat(), order=max([e['order'] for e in self._learning_events(connection)] + [0]) + 1)
+                event = dict(id=uuid4().hex, item_id=linked['id'], status='Completed' if state == 'completed' else 'In progress', remaining='' if state == 'completed' else display_wording(linked), evidence='Teacher manually changed linked carryover', confirmed_complete=state == 'completed', manual=True, date=date.today().isoformat(), order=max([e['order'] for e in self._learning_events(connection)] + [0]) + 1)
                 connection.execute('INSERT INTO monthly_item_updates (id, update_data) VALUES (%s, %s)', (event['id'], json.dumps(event)))
                 self._project_position(connection)
             item["state"] = state
@@ -432,7 +432,7 @@ class Store(LearningStore):
             if connection.execute("SELECT id FROM actual_progress WHERE planning_date = %s LIMIT 1",
                                   (plan["planning_date"],)).fetchone():
                 raise StorageError("Progress already exists for this date. Review or correct it in Progress History.")
-            items = {i['id']: i for i in self._learning(connection, plan['planning_date']) if not i['archived']}
+            items = {i['id']: i for i in self._learning(connection, plan['planning_date']) if planning_allowed(i)}
             allowed_periods = {plan.get('monthly_plan', {}).get('id')}
             allowed_ids = {i.get('monthly_item_id') for i in self._carryover(connection, plan['planning_date']) if i['state'] == 'outstanding'}
             for lesson in plan['lessons']:
@@ -460,7 +460,7 @@ class Store(LearningStore):
                 key = subject_bucket(item['subject'])
                 if MARKER not in updated.get(key, ''):
                     updated[key] = updated.get(key, '') + MARKER
-                updated[key] += f"- {item.get('last_date', '')} | [{item['id']}] {item['description']}: {item['status']}. Remaining: {item['remaining']}. Teacher evidence: {item['evidence']}\n"
+                updated[key] += f"- {item.get('last_date', '')} | [{item['id']}] {display_wording(item)}: {item['status']}. Remaining: {item['remaining']}. Teacher evidence: {item['evidence']}\n"
         connection.execute("""
             INSERT INTO current_learning_position (id, position_data) VALUES (1, %s)
             ON CONFLICT (id) DO UPDATE SET position_data = EXCLUDED.position_data

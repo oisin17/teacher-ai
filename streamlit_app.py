@@ -7,13 +7,13 @@ from uuid import uuid4
 from monthly_plans import suggest_dates
 import importlib
 import monthly_learning
-if getattr(monthly_learning, "LEARNING_VERSION", None) != 2:
+if getattr(monthly_learning, "LEARNING_VERSION", None) != 3:
     importlib.reload(monthly_learning)
 import monthly_learning_ui
-if getattr(monthly_learning_ui, "MODULE_VERSION", None) != 6:
+if getattr(monthly_learning_ui, "MODULE_VERSION", None) != 7:
     importlib.reload(monthly_learning_ui)
 from monthly_learning_ui import review_items, item_inputs, suggest_outcomes
-from monthly_learning import MARKER, fingerprint
+from monthly_learning import MARKER, fingerprint, planning_allowed, display_wording
 import importlib
 import timetable_constraints
 if getattr(timetable_constraints, "CONSTRAINT_VERSION", None) != 2:
@@ -32,7 +32,7 @@ if refresh_lessons:
 import persistence
 # Streamlit hot reload can retain the previous imported storage module.
 # Reload only when that cached module lacks this rollout's additive API.
-if refresh_lessons or getattr(persistence, "PERSISTENCE_VERSION", None) != 9:
+if refresh_lessons or getattr(persistence, "PERSISTENCE_VERSION", None) != 10:
     importlib.reload(persistence)
 from persistence import Store, StorageError
 import json
@@ -440,8 +440,9 @@ if page == "Today":
             with st.spinner("Teacher AI is planning your day..."):
                 try:
                     learning_items = storage_call(store.list_learning_items, None, planning_date.isoformat())
-                    current_items = [i for i in learning_items if not i["archived"] and ((i["monthly_plan_id"] == selected_monthly["id"] and i["fingerprint"] == fingerprint(selected_monthly["plan_text"])) or i["id"] in {c.get("monthly_item_id") for c in outstanding_carryover})]
-                    generation_items = [{"item_id": i["id"], **{k: i[k] for k in ("subject", "description", "type", "status", "remaining", "evidence")}} for i in current_items]
+                    current_items = [i for i in learning_items if planning_allowed(i) and ((i["monthly_plan_id"] == selected_monthly["id"] and i["fingerprint"] == fingerprint(selected_monthly["plan_text"])) or i["id"] in {c.get("monthly_item_id") for c in outstanding_carryover})]
+                    generation_items = [{"item_id": i["id"], **{k: i[k] for k in ("subject", "type", "status", "remaining", "evidence")}, "description": display_wording(i)} for i in current_items]
+                    held_items = [display_wording(i) for i in learning_items if i["monthly_plan_id"] == selected_monthly["id"] and not i["archived"] and i.get("requires_clarification")]
                     recent_progress = load_recent_progress()
                     current_learning_position = load_current_learning_position()
                     st.session_state["current_learning_position"] = current_learning_position
@@ -539,6 +540,7 @@ if page == "Today":
                             "Use newer dated evidence ahead of older entries; never assume a completed lesson finishes its unit.\n\n"
 
                             f"CONFIRMED MONTHLY LEARNING ITEMS (status and remaining learning are authoritative):\n{generation_items}\n"
+                            f"AWAITING TEACHER CLARIFICATION — do not prioritise or schedule these ambiguous scopes, even if present in original document text: {held_items}\n"
                             "For every lesson addressing a confirmed item, put its exact item_id and the specific addressed scope in monthly_item_links. Use [] when no confirmed item applies. Never fabricate IDs, link just by subject, repeat completed items, or claim one lesson finishes a recurring/broad objective. Plan remaining learning instead of repeating already completed aspects. Include 'Monthly item:' plus the exact ID and addressed scope in lesson details.\n"
                             f"TEACHER PROFILE:\n{teacher_profile}\n\n"
                             f"WEEKLY TIMETABLE:\n{timetable_text}\n\n"

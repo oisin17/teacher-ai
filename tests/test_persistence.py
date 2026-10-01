@@ -618,6 +618,91 @@ class StoreTests(unittest.TestCase):
             self.store.save_period_review(november, '2026-11-01', [{**carry, 'id': 'duplicate', 'period_id': 'nov', 'created_date': '2026-11-01'}], True)
 
 
+    def regroup_bundle(self, monthly, items):
+        backup = self.store.export_backup()
+        raw = backup['monthly_learning_items']
+        desired = [{**i, 'archived': True} if i['id'] in ('item-0', 'item-1') else i for i in raw]
+        desired.append({**items[0], 'id': 'replacement', 'description': 'Reviewed combined scope', 'replacement_from': ['item-0', 'item-1']})
+        return dict(monthly_plan_id=monthly['id'], expected_items=self.store.list_learning_items(monthly['id']), expected_updates=backup['monthly_item_updates'], expected_carryover=backup['carryover_items'], items=desired)
+
+    def test_reviewed_regrouping_preserves_history_and_never_copies_completion(self):
+        monthly, items, plan = self.learning_setup()
+        self.store.correct_learning_item('item-0', 'Completed', '', 'whole old scope completed', True)
+        before = self.store.export_backup()
+        self.store.apply_reviewed_regrouping(monthly, self.regroup_bundle(monthly, items), True)
+        after = self.store.export_backup()
+        self.assertEqual(before['monthly_item_updates'], after['monthly_item_updates'])
+        self.assertEqual(before['day_plans'], after['day_plans'])
+        self.assertEqual(next(i for i in self.store.list_learning_items() if i['id'] == 'replacement')['status'], 'Not started')
+        self.assertTrue(next(i for i in self.store.list_learning_items() if i['id'] == 'item-0')['archived'])
+        # Existing day-plan snapshots remain recordable against their original IDs.
+        self.store.save_lesson_progress(plan['planning_date'], plan['plan_id'], outcomes(plan))
+        self.assertEqual(self.store.load_progress_history()[0]['lessons'][1]['monthly_item_links'], plan['lessons'][1]['monthly_item_links'])
+
+    def test_regrouping_stale_progress_source_tampering_and_repeat_are_atomic(self):
+        monthly, items, plan = self.learning_setup()
+        bundle = self.regroup_bundle(monthly, items)
+        self.store.correct_learning_item('item-0', 'In progress', 'last part', 'new note', False)
+        before = self.store.export_backup()
+        with self.assertRaises(StorageError):
+            self.store.apply_reviewed_regrouping(monthly, bundle, True)
+        self.assertEqual(before, self.store.export_backup())
+        bundle = self.regroup_bundle(monthly, items)
+        bundle['items'][0]['source'] = 'changed quote'
+        with self.assertRaises(StorageError):
+            self.store.apply_reviewed_regrouping(monthly, bundle, True)
+        self.assertEqual(before, self.store.export_backup())
+        bundle = self.regroup_bundle(monthly, items)
+        self.store.apply_reviewed_regrouping(monthly, bundle, True)
+        saved = self.store.export_backup()
+        with self.assertRaises(StorageError):
+            self.store.apply_reviewed_regrouping(monthly, bundle, True)
+        self.assertEqual(saved, self.store.export_backup())
+
+    def test_regrouping_carryover_uses_shared_replacement_without_outcome_transfer(self):
+        monthly, items, plan = self.learning_setup()
+        october = self.monthly('oct', '2026-10-01', '2026-10-31')
+        self.store.save_monthly_plan(october, True)
+        carry = dict(id='shared', monthly_item_id='item-0', period_id='oct', subject='History', learning='old scope', evidence='teacher confirms', created_date='2026-10-01', state='outstanding')
+        self.store.save_period_review(october, '2026-10-01', [carry], True)
+        self.store.apply_reviewed_regrouping(monthly, self.regroup_bundle(monthly, items), True)
+        self.assertEqual(self.store.list_carryover()[0]['monthly_item_id'], 'replacement')
+        self.assertEqual(self.store.list_carryover()[0]['state'], 'outstanding')
+        self.assertEqual(next(i for i in self.store.list_learning_items() if i['id']=='replacement')['status'], 'Not started')
+
+    def test_clarification_blocks_new_links_and_display_edits_keep_exact_source(self):
+        from monthly_learning import display_wording
+        monthly, items, plan = self.learning_setup()
+        edited = self.store.list_learning_items()
+        source = edited[0]['source']
+        edited[0].update(requires_clarification=True, display_correction='Teacher-corrected name')
+        self.store.save_learning_items(monthly, edited)
+        item = self.store.list_learning_items()[0]
+        self.assertEqual(display_wording(item), 'Teacher-corrected name')
+        self.assertEqual(item['source'], source)
+        with self.assertRaises(StorageError):
+            self.store.save_day_plan(plan)
+        edited = self.store.list_learning_items()
+        edited[0]['requires_clarification'] = False
+        self.store.save_learning_items(monthly, edited)
+        self.store.save_day_plan(plan)
+
+    def test_regrouping_split_carryover_preserves_priority_pending_scope_review(self):
+        monthly, items, plan = self.learning_setup()
+        october = self.monthly('oct', '2026-10-01', '2026-10-31')
+        self.store.save_monthly_plan(october, True)
+        carry = dict(id='shared', monthly_item_id='item-0', period_id='oct', subject='History', learning='unfinished old scope', evidence='teacher note', created_date='2026-10-01', state='outstanding')
+        self.store.save_period_review(october, '2026-10-01', [carry], True)
+        bundle = self.regroup_bundle(monthly, items)
+        bundle['items'].append({**bundle['items'][-1], 'id': 'second-child', 'replacement_from': ['item-0']})
+        self.store.apply_reviewed_regrouping(monthly, bundle, True)
+        saved = self.store.list_carryover()[0]
+        self.assertNotIn('monthly_item_id', saved)
+        self.assertEqual(saved['state'], 'outstanding')
+        self.assertEqual(saved['learning'], 'unfinished old scope')
+        self.assertEqual(set(saved['candidate_monthly_item_ids']), {'replacement', 'second-child'})
+        self.assertTrue(saved['link_requires_review'])
+
     def test_item_backup_roundtrip_and_invalid_reference_atomic(self):
         monthly, items, plan = self.learning_setup()
         self.store.save_lesson_progress(plan['planning_date'], plan['plan_id'], outcomes(plan))
