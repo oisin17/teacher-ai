@@ -9,7 +9,7 @@ from timetable_constraints import interval, TIME_RANGE, singing_day
 from monthly_learning import planning_allowed, fingerprint
 
 RUBRIC_VERSION = 1
-QUALITY_MODULE_VERSION = 16
+QUALITY_MODULE_VERSION = 17
 CATEGORIES = ('alignment', 'progression', 'timetable', 'lesson_quality', 'practicality', 'specificity', 'usability')
 STATES = ('Pass', 'Revise', 'Blocked', 'Unchecked')
 HARD_CODES = ('unsupported_content', 'invalid_scope', 'unfinished_contradiction', 'completed_repetition', 'broad_completion', 'held_scope', 'unavailable_resource', 'missing_essential')
@@ -117,10 +117,16 @@ def code_checks(plan, context):
     for a,b in zip(sorted(overview),sorted(overview)[1:]):
         if b[0] < a[1]:
             problems.append(issue('overview_overlap', 'Overview timetable blocks overlap.'))
-    arrangements = context['teacher_profile'].get('recurring_arrangements','')
-    if date.fromisoformat(day).weekday() == 4 and re.search(r'Friday[^\n]*Art',arrangements,re.I) and not any(s >= 780 and re.search(r'art|visual arts',plan['lessons'][n]['subject'],re.I) for s,e,n in slots):
-        problems.append(issue('friday_art', 'Preserve Friday afternoon Art.'))
+    if teaching_requirements(context) and not any(s >= 780 and re.search(r'art|visual arts',plan['lessons'][n]['subject'],re.I) for s,e,n in slots):
+        problems.append(issue('friday_art', 'Preserve Friday afternoon Art as an actual Art lesson starting at or after 13:00 before Pack Up; an overview row alone is insufficient.'))
     return problems
+
+
+def teaching_requirements(context):
+    """Keep untimed teaching arrangements distinct from overview-only blocks."""
+    if date.fromisoformat(context['planning_date']).weekday()==4 and re.search(r'Friday[^\n]*Art',context['teacher_profile'].get('recurring_arrangements',''),re.I):
+        return [dict(subject='Art',not_before='13:00',instruction='Include an actual afternoon Art lesson in BOTH overview and lessons, with learning intention, phases and supported Art item links. End before Pack Up. Art is teaching, unlike overview-only protected Sport/Singing.')]
+    return []
 
 
 REVIEW_FORMAT = {'type':'json_schema','name':'planning_quality_review','strict':True,'schema':{
@@ -160,6 +166,7 @@ def review_context(context):
     from monthly_learning import display_wording
     compact = copy.deepcopy(context)
     compact['protected_blocks'] = [dict(time=f'{a//60:02}:{a%60:02}–{b//60:02}:{b%60:02}',name=name) for a,b,name in protected_blocks(context)]
+    compact['required_teaching_arrangements'] = teaching_requirements(context)
     monthly_id = context['monthly_plan']['id']
     linked_carry = {c.get('monthly_item_id') for c in context['carryover']}
     compact['learning_items'] = [dict(id=i['id'], monthly_plan_id=i['monthly_plan_id'],
@@ -412,7 +419,7 @@ def quality_gate(plan, context, client, generation_format):
                     else:
                         lesson_schema['monthly_item_links']['maxItems']=0
                 response=client.responses.create(model='gpt-5.4',reasoning={'effort':'low'},text={'format':repair_format},
-                    input='Repair this daily plan ONLY to resolve the listed material findings. Preserve correct teaching and protected routines. Use exact source-backed content; never alter learning outcomes. Return the whole corrected plan, not review JSON. For EVERY linked carryover ID, include a Carryover reference line in details quoting its learning text from EVIDENCE VERBATIM (including punctuation); phases must identify and resume that actual prior task. Do not substitute a new-month topic for an unknown prior task. Each lesson needs phases [{minutes: positive integer, activity: concise description}]; phase totals equal clock duration, including setup and tidy-up. Do not duplicate phases in details. '+REVIEW_RULES+'\nTIMING CHECK: Keep each lesson time identical to its overview row. First compute end minus start; then allocate positive whole phase minutes summing to that exact number. Do not lengthen a lesson into protected blocks to fit activities.\nEVIDENCE:\n'+json.dumps(review_context(context),ensure_ascii=False)+'\nPROTECTED BLOCKS FOR THIS DATE (EXACT):\n'+json.dumps([dict(time=f'{a//60:02}:{a%60:02}–{b//60:02}:{b%60:02}',name=name) for a,b,name in protected_blocks(context)],ensure_ascii=False)+'\nFINDINGS:\n'+json.dumps(report['findings'],ensure_ascii=False)+'\nCANDIDATE:\n'+json.dumps(plan,ensure_ascii=False))
+                    input='Repair this daily plan ONLY to resolve the listed material findings. Preserve correct teaching and protected routines. Use exact source-backed content; never alter learning outcomes. Return the whole corrected plan, not review JSON. For EVERY linked carryover ID, include a Carryover reference line in details quoting its learning text from EVIDENCE VERBATIM (including punctuation); phases must identify and resume that actual prior task. Do not substitute a new-month topic for an unknown prior task. Each lesson needs phases [{minutes: positive integer, activity: concise description}]; phase totals equal clock duration, including setup and tidy-up. Do not duplicate phases in details. '+REVIEW_RULES+'\nTIMING CHECK: Keep each lesson time identical to its overview row. First compute end minus start; then allocate positive whole phase minutes summing to that exact number. Do not lengthen a lesson into protected blocks to fit activities.\nEVIDENCE:\n'+json.dumps(review_context(context),ensure_ascii=False)+'\nPROTECTED BLOCKS FOR THIS DATE (EXACT):\n'+json.dumps([dict(time=f'{a//60:02}:{a%60:02}–{b//60:02}:{b%60:02}',name=name) for a,b,name in protected_blocks(context)],ensure_ascii=False)+'\nFINDINGS:\n'+json.dumps(report['findings'],ensure_ascii=False)+'\nCANDIDATE:\n'+json.dumps(plan,ensure_ascii=False)+'\nFINAL OUTPUT CONTRACT: Return ONLY the corrected overview and lessons, NOT rubric findings. Preserve ALL exact protected blocks. ALSO satisfy these required TEACHING arrangements (they must not be treated as overview-only): '+json.dumps(teaching_requirements(context),ensure_ascii=False))
                 plan=parse_generated_plan(response.output_text,context['planning_date'])
                 plan['monthly_plan']={k:context['monthly_plan'][k] for k in ('id','title','start_date','end_date')}
                 minute_adjustments=allocate_repair_minutes(plan)
