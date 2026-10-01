@@ -794,3 +794,54 @@ Restore validates references, remaps restored progress IDs and refuses nonempty 
 No new infrastructure, credentials, authentication or paid service was added.
 
 Live extraction initially rejected AI-reproduced source quotations. Extraction now uses numbered original document lines: AI selects the line index, and the app copies its text verbatim. Live acceptance and final test results will be appended after deployment verification.
+
+### Item rollout verification
+
+70 local automated tests (plus four subtests) and PostgreSQL 16 CI pass. Additional
+checks cover newer explicitly accepted outcomes reopening an item, immutable
+historical references after merges, rollback on unverifiable sources, and correction
+of linked carryover closures. Daily AI mapping is tested as an unsaved draft until
+teacher acceptance, including explicit whole-item completion confirmation.
+
+The deployed app extracted and saved reviewed learning items from both existing
+confirmed September and October 2026 documents, without reupload. October History
+was reviewed live: an overlapping summary was split into events and responses,
+two effects suggestions were merged, and a redundant broad summary archived.
+September's digital-learning suggestion was corrected from Religion to Other.
+No past teaching completion was inferred; all new items remained Not started.
+The live date boundary still selects September for September 30 and October for
+October 1. The existing October transition decision is retained without repeating
+the review. Final live generation/refresh and backup results follow below.
+
+Mixed partial notes addressing several linked items now trigger a draft exception review before the first durable save. Suggestions remain editable and whole-item completion still requires explicit confirmation. AI failure retains conservative/manual saving. The isolated AppTest verifies the first Save creates no teaching record, then teacher acceptance saves exact completed/unfinished items.
+
+
+### Final verification after interrupted-run recovery
+
+PR #5 was already merged and the reviewed item sets plus linked October 1 day
+plan already saved before the interruption. Recovery inspected current main,
+all branches/PRs, deployed UI and local outputs before continuing only unfinished
+verification. No extraction, item review or saved day-plan generation was repeated.
+
+The real October 1 plan restored in a fresh browser and after refresh: five lessons
+with nine exact monthly-item links, pack-up 13:50–14:00 and protected external
+Singing 14:00–14:30. A live unsaved History note (“Causes finished; events and the
+final effects activity unfinished.”) produced Completed for causes and In progress
+for events/effects with specific remaining text. Every whole-item confirmation
+checkbox remained unchecked. Refresh discarded those fictional test drafts.
+
+The final format-5 production export matched the pre-item rollout backup exactly
+for Teacher Profile, Planning Setup, Current Learning, Actual Progress, both original
+Monthly Plans, period reviews and existing carryover. It contained 300 item records
+(146 September, 154 October including four archived originals), no item outcome
+events, and only the one pre-existing Actual Progress record. The linked October
+1 plan is the intentional day-plan change. No fictional teaching outcomes were saved.
+
+An additional atomic guard prevents the same underlying unfinished item becoming
+duplicate outstanding carryover in another period; transition suggestions also
+exclude already outstanding references. All 70 local tests passed on the final
+code, and GitHub Actions run 36856758087 passed both the full Streamlit/regression
+suite and real PostgreSQL 16 storage/concurrency tests. Backup/restore and complete
+progress → item state → Current Learning → next-generation inputs are verified
+with isolated automated data. A genuine classroom progress save remains owner
+acceptance work; it was not simulated in production.
