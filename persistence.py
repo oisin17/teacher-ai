@@ -28,7 +28,7 @@ DOCUMENTS = {
     "current_learning_position": "position_data",
 }
 LOCK_ID = 73190421
-PERSISTENCE_VERSION = 11
+PERSISTENCE_VERSION = 12
 
 
 from monthly_learning import LearningStore, validate_item as validate_learning_item, validate_update, MARKER, planning_allowed, display_wording
@@ -95,6 +95,14 @@ class Store(LearningStore):
                     name TEXT PRIMARY KEY
                 )
             """)
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS lesson_resources (
+                    id TEXT PRIMARY KEY, owner_scope TEXT NOT NULL,
+                    planning_date TEXT NOT NULL, plan_id TEXT NOT NULL,
+                    lesson_id TEXT NOT NULL, resource_data TEXT NOT NULL
+                )
+            """)
+            connection.execute("CREATE INDEX IF NOT EXISTS resource_lesson_idx ON lesson_resources (owner_scope, planning_date, plan_id, lesson_id)")
             # Additive tables leave every historical whole-day record intact.
             connection.execute("""
                 CREATE TABLE IF NOT EXISTS day_plans (
@@ -307,7 +315,7 @@ class Store(LearningStore):
     def _import_legacy(connection, legacy_path):
         # Import only into a completely empty destination, once, atomically.
         # A stale deployment must never overwrite teacher edits in PostgreSQL.
-        for table in [*DOCUMENTS, "actual_progress", "day_plans", "monthly_plans", "period_reviews", "carryover_items", "monthly_learning_items", "monthly_item_updates"]:
+        for table in [*DOCUMENTS, "actual_progress", "day_plans", "monthly_plans", "period_reviews", "carryover_items", "monthly_learning_items", "monthly_item_updates", "lesson_resources"]:
             if connection.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone():
                 return
         path = Path(legacy_path)
@@ -437,6 +445,64 @@ class Store(LearningStore):
         with self._connection() as connection:
             self._lock(connection)
             return self._quality_context(connection, planning_date)
+
+    def _resource_context(self, connection, day, plan_id, lesson_id):
+        from lesson_resources import ResourceFailure
+        row = connection.execute("SELECT plan_data FROM day_plans WHERE planning_date = %s", (day,)).fetchone()
+        plan = json.loads(row[0]) if row else None
+        if not plan or plan['plan_id'] != plan_id:
+            raise StorageError('This lesson has been replaced. Existing resources remain available; reopen the current lesson to generate or save.')
+        lesson = next((l for l in plan['lessons'] if l['lesson_id'] == lesson_id), None)
+        if not lesson or plan.get('planning_quality', {}).get('state') != 'Pass':
+            raise StorageError('Resource generation requires an exact saved rubric-approved lesson.')
+        evidence = self._quality_context(connection, day)
+        linked = {l['item_id'] for l in lesson.get('monthly_item_links', [])}
+        carried = set(lesson.get('carryover_ids', []))
+        return dict(plan_id=plan_id, planning_date=day, lesson=lesson,
+                    profile=evidence['teacher_profile'],
+                    learning=[i for i in evidence['learning_items'] if i['id'] in linked],
+                    carryover=[i for i in evidence['carryover'] if i['id'] in carried],
+                    current=evidence['current_learning_position'],
+                    recent_progress=evidence['recent_progress'])
+
+    def resource_context(self, day, plan_id, lesson_id):
+        with self._connection() as connection:
+            self._lock(connection)
+            return self._resource_context(connection, day, plan_id, lesson_id)
+
+    def list_resources(self, day):
+        with self._connection() as connection:
+            return [json.loads(row[0]) for row in connection.execute(
+                "SELECT resource_data FROM lesson_resources WHERE owner_scope = %s AND planning_date = %s ORDER BY id",
+                ('single-teacher', day)).fetchall()]
+
+    def save_resource(self, resource, expected_revision=0):
+        import copy
+        from datetime import datetime, timezone
+        from lesson_resources import digest, validate_saved
+        with self._connection() as connection:
+            self._lock(connection)
+            context = self._resource_context(connection, resource['planning_date'], resource['plan_id'], resource['lesson_id'])
+            if digest(context) != resource['context_digest']:
+                raise StorageError('Lesson evidence changed. Regenerate with current evidence; the saved resource is unchanged.')
+            row = connection.execute("SELECT resource_data FROM lesson_resources WHERE id = %s", (resource['id'],)).fetchone()
+            previous = json.loads(row[0]) if row else None
+            if (previous['revision'] if previous else 0) != expected_revision:
+                raise StorageError('Another session changed this resource. Reopen it before saving.')
+            if previous and any(previous[k] != resource[k] for k in ('owner_scope','plan_id','lesson_id','planning_date')):
+                raise StorageError('Resource parent cannot be changed.')
+            value = copy.deepcopy(resource)
+            value['revision'] = expected_revision + 1
+            value['updated_at'] = datetime.now(timezone.utc).isoformat()
+            value['versions'] = previous.get('versions', []) + [{k:v for k,v in previous.items() if k != 'versions'}] if previous else []
+            if previous: value['created_at'] = previous['created_at']
+            try: validate_saved(value)
+            except (KeyError, TypeError, ValueError):
+                raise StorageError('Resource checks failed. No resource has been saved.') from None
+            connection.execute("""INSERT INTO lesson_resources (id, owner_scope, planning_date, plan_id, lesson_id, resource_data)
+                VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (id) DO UPDATE SET resource_data = EXCLUDED.resource_data""",
+                tuple(value[k] for k in ('id','owner_scope','planning_date','plan_id','lesson_id')) + (json.dumps(value, ensure_ascii=False),))
+            return value
 
     def save_day_plan(self, plan):
         try:
@@ -621,7 +687,7 @@ class Store(LearningStore):
     def export_backup(self):
         with self._connection() as connection:
             self._lock(connection)
-            backup = {"format_version": 5}
+            backup = {"format_version": 6}
             for table, column in DOCUMENTS.items():
                 row = connection.execute(
                     f"SELECT {column} FROM {table} WHERE id = 1"
@@ -644,6 +710,7 @@ class Store(LearningStore):
             backup["period_reviews"] = [json.loads(row[0]) for row in connection.execute("SELECT review_data FROM period_reviews ORDER BY period_id").fetchall()]
             backup["carryover_items"] = [json.loads(row[0]) for row in connection.execute("SELECT item_data FROM carryover_items ORDER BY id").fetchall()]
             backup["monthly_plans"] = self._monthly(connection)
+            backup["lesson_resources"] = [json.loads(row[0]) for row in connection.execute("SELECT resource_data FROM lesson_resources ORDER BY id").fetchall()]
             backup["day_plans"] = [json.loads(row[0]) for row in connection.execute(
                 "SELECT plan_data FROM day_plans ORDER BY planning_date"
             ).fetchall()]
@@ -652,7 +719,7 @@ class Store(LearningStore):
     def restore_backup(self, backup):
         # Validate the whole upload before starting any write.
         try:
-            if not isinstance(backup, dict) or backup.get("format_version") not in (1, 2, 3, 4, 5):
+            if not isinstance(backup, dict) or backup.get("format_version") not in (1, 2, 3, 4, 5, 6):
                 raise ValueError("Unsupported backup")
             if not all(isinstance(backup.get(table), dict) for table in DOCUMENTS):
                 raise ValueError("Missing documents")
@@ -731,6 +798,15 @@ class Store(LearningStore):
                 for lesson in saved.get('lessons', []):
                     if any(link['item_id'] not in learning_ids for link in lesson.get('monthly_item_links', [])):
                         raise ValueError('Unknown lesson learning')
+            resources = backup.get('lesson_resources', []) if backup['format_version'] >= 6 else []
+            from lesson_resources import validate_saved
+            if not isinstance(resources, list) or len({r['id'] for r in resources}) != len(resources):
+                raise ValueError('Invalid resources')
+            for resource in resources:
+                validate_saved(resource)
+                school_date(resource['planning_date'])
+                if any(link['item_id'] not in learning_ids for link in resource['lesson_snapshot'].get('monthly_item_links', [])):
+                    raise ValueError('Invalid historical resource learning reference')
             dates = set()
             for plan in plans:
                 validate_plan(plan)
@@ -742,7 +818,7 @@ class Store(LearningStore):
         with self._connection() as connection:
             self._lock(connection)
             # Never overwrite existing durable teacher edits through restore.
-            for table in [*DOCUMENTS, "actual_progress", "day_plans", "lesson_progress", "monthly_plans", "period_reviews", "carryover_items", "monthly_learning_items", "monthly_item_updates"]:
+            for table in [*DOCUMENTS, "actual_progress", "day_plans", "lesson_progress", "monthly_plans", "period_reviews", "carryover_items", "monthly_learning_items", "monthly_item_updates", "lesson_resources"]:
                 if connection.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone():
                     return False
             for table, column in DOCUMENTS.items():
@@ -773,6 +849,9 @@ class Store(LearningStore):
             for item in monthly:
                 connection.execute("INSERT INTO monthly_plans (id, title, source_filename, plan_text, start_date, end_date) VALUES (%s, %s, %s, %s, %s, %s)",
                                    tuple(item[key] for key in ("id", "title", "source_filename", "plan_text", "start_date", "end_date")))
+            for resource in resources:
+                connection.execute("INSERT INTO lesson_resources (id, owner_scope, planning_date, plan_id, lesson_id, resource_data) VALUES (%s, %s, %s, %s, %s, %s)",
+                    tuple(resource[k] for k in ('id','owner_scope','planning_date','plan_id','lesson_id')) + (json.dumps(resource, ensure_ascii=False),))
             if backup["format_version"] < 3:
                 self._migrate_monthly(connection)
             for review in reviews:

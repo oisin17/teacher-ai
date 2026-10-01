@@ -91,6 +91,71 @@ class AppTests(unittest.TestCase):
         self.assertEqual(len(app.error), 0)
         return app
 
+    def resource_app(self):
+        import json
+        app=self.generated_app()
+        original=self.client.responses.create.side_effect
+        def response(**kwargs):
+            name=kwargs['text']['format']['name']
+            if name=='lesson_resource_batch':
+                return SimpleNamespace(output_text=json.dumps({'resources':[dict(type='whiteboard',title='Rounding questions',body='Round 12345 to the nearest 1000.',guidance='12000',evidence_ids=['lesson'])]}))
+            if name=='lesson_resource_review':
+                return SimpleNamespace(output_text=json.dumps({'checks':[{'type':'whiteboard','pass':True,'findings':[]}]}))
+            return original(**kwargs)
+        self.client.responses.create.side_effect=response
+        self.button(app,'Create resources / saved resources').click().run()
+        return app
+
+    def test_resource_ui_draft_edit_save_title_zero_calls_and_reopen(self):
+        app=self.resource_app();before=self.store.export_backup()
+        app.multiselect[0].set_value(['whiteboard'])
+        self.button(app,'Generate selected resources').click().run()
+        self.assertEqual(len(app.exception),0)
+        self.assertEqual(self.store.list_resources('2026-09-30'),[])
+        body=next(w for w in app.text_area if w.label=='Classroom content')
+        calls=self.client.responses.create.call_count
+        body.set_value('Round 23456 to the nearest 1000.').run()
+        self.assertEqual(self.client.responses.create.call_count,calls)
+        self.button(app,'Save resource').click().run()
+        self.assertEqual(len(app.exception),0)
+        self.assertEqual(self.client.responses.create.call_count,calls+1)
+        saved=self.store.list_resources('2026-09-30')[0]
+        self.assertEqual(saved['body'],'Round 23456 to the nearest 1000.')
+        calls=self.client.responses.create.call_count
+        next(w for w in app.text_input if w.label=='Resource title').set_value('My questions')
+        self.button(app,'Save changes').click().run()
+        self.assertEqual(self.client.responses.create.call_count,calls)
+        self.assertEqual(self.store.list_resources('2026-09-30')[0]['revision'],2)
+        after=self.store.export_backup()
+        for k in before:
+            if k!='lesson_resources': self.assertEqual(before[k],after[k])
+        fresh=self.new_app();fresh.date_input[0].set_value(date(2026,9,30)).run()
+        self.button(fresh,'Create resources / saved resources').click().run()
+        self.assertTrue(any(w.value=='My questions' for w in fresh.text_input))
+
+    def test_resource_ui_no_source_comprehension_makes_zero_calls(self):
+        app=self.resource_app()
+        next(w for w in app.checkbox if w.label=='More resource options').check().run()
+        app.multiselect[0].set_value(['comprehension'])
+        calls=self.client.responses.create.call_count
+        self.button(app,'Generate selected resources').click().run()
+        self.assertEqual(self.client.responses.create.call_count,calls)
+        self.assertIn('Paste the relevant source',app.error[0].value)
+        self.assertEqual(self.store.list_resources('2026-09-30'),[])
+
+    def test_resource_ui_regeneration_keeps_saved_original_until_save(self):
+        app=self.resource_app();app.multiselect[0].set_value(['whiteboard'])
+        self.button(app,'Generate selected resources').click().run()
+        self.button(app,'Save resource').click().run()
+        original=self.store.list_resources('2026-09-30')
+        calls=self.client.responses.create.call_count
+        self.button(app,'Regenerate resource').click().run()
+        self.assertEqual(len(app.exception),0)
+        self.assertEqual(self.client.responses.create.call_count,calls+2)
+        self.assertEqual(self.store.list_resources('2026-09-30'),original)
+        self.button(app,'Save changes').click().run()
+        self.assertEqual(self.store.list_resources('2026-09-30')[0]['revision'],2)
+
     def test_rubric_bad_candidate_keeps_previous_and_all_learning(self):
         import json
         previous=sample_plan('2026-10-01');self.store.save_day_plan(previous)

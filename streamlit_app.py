@@ -33,7 +33,7 @@ if refresh_lessons:
 import persistence
 # Streamlit hot reload can retain the previous imported storage module.
 # Reload only when that cached module lacks this rollout's additive API.
-if refresh_lessons or getattr(persistence, "PERSISTENCE_VERSION", None) != 11:
+if refresh_lessons or getattr(persistence, "PERSISTENCE_VERSION", None) != 12:
     importlib.reload(persistence)
 from persistence import Store, StorageError
 import planning_quality
@@ -628,6 +628,9 @@ if page == "Today":
     st.subheader("Lessons")
 
     saved_plan = day_state["plan"]
+    if not saved_plan:
+        from lesson_resources_ui import historical_panel
+        historical_panel(storage_call(store.list_resources, planning_date.isoformat()), None)
     if saved_plan:
         provenance = day_state["plan"].get("monthly_plan") if day_state["plan"] else None
         if provenance:
@@ -635,7 +638,15 @@ if page == "Today":
         else:
             st.caption("This saved day plan predates dated Monthly Plans; its original monthly source was not recorded.")
         st.caption(f"Generated for **{planning_day}, {planning_date.strftime('%d/%m/%Y')}**")
-        st.markdown(plan_markdown(saved_plan))
+        from lesson_resources_ui import lesson_panel, historical_panel
+        if st.session_state.pop('resource_notice', None):
+            st.success('Resource saved. Classroom progress unchanged.')
+        saved_resources = storage_call(store.list_resources, planning_date.isoformat())
+        st.markdown(saved_plan['overview'])
+        for resource_lesson in saved_plan['lessons']:
+            st.markdown(plan_markdown(dict(saved_plan, overview='', lessons=[resource_lesson])))
+            lesson_panel(store, client, saved_plan, resource_lesson, saved_resources)
+        historical_panel(saved_resources, saved_plan)
         quality = saved_plan.get('planning_quality')
         if quality:
             with st.expander('Planning checks'):

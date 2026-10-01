@@ -58,7 +58,7 @@ class StoreTests(unittest.TestCase):
                 raise RuntimeError("Integration tests only accept a local test_teacher_ai database")
             self.real_connect = psycopg.connect
             with self.real_connect(self.url) as connection:
-                for table in ["monthly_item_updates", "monthly_learning_items", "period_reviews", "carryover_items", "monthly_plans", "lesson_progress", "day_plans", *DOCUMENTS, "actual_progress", "storage_migrations"]:
+                for table in ["lesson_resources", "monthly_item_updates", "monthly_learning_items", "period_reviews", "carryover_items", "monthly_plans", "lesson_progress", "day_plans", *DOCUMENTS, "actual_progress", "storage_migrations"]:
                     connection.execute(f"DROP TABLE IF EXISTS {table}")
             def connect(url, **kwargs):
                 # The isolated CI localhost service has no TLS; production
@@ -77,6 +77,85 @@ class StoreTests(unittest.TestCase):
     def tearDown(self):
         self.patcher.stop()
         self.temp.cleanup()
+
+    def resource_fixture(self):
+        from planning_quality import digest
+        from lesson_resources import generate
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        self.store.save_monthly_plan(self.monthly(), True)
+        plan = sample_plan('2026-09-30')
+        context = self.store.planning_quality_context('2026-09-30')
+        plan['monthly_plan'] = {k: context['monthly_plan'][k] for k in ('id','title','start_date','end_date')}
+        plan['planning_quality'] = dict(state='Pass',context_digest=digest(context))
+        self.store.save_day_plan(plan)
+        context = self.store.resource_context(plan['planning_date'],plan['plan_id'],plan['lessons'][0]['lesson_id'])
+        client=Mock(); client.responses.create.side_effect=[SimpleNamespace(output_text=json.dumps({'resources':[dict(type='whiteboard',title='Rounding',body='Round 12345 to the nearest 1000.',guidance='12000',evidence_ids=['lesson'])]})),SimpleNamespace(output_text=json.dumps({'checks':[{'type':'whiteboard','pass':True,'findings':[]}]}))]
+        return plan, generate(context,['whiteboard'],'no printing','',True,client)[0]
+
+    def test_resources_save_preserves_every_other_area_and_reopens(self):
+        plan,resource=self.resource_fixture();before=self.store.export_backup()
+        saved=self.store.save_resource(resource)
+        self.assertEqual(saved['revision'],1)
+        self.assertEqual(self.store.list_resources(plan['planning_date']),[saved])
+        after=self.store.export_backup()
+        for key in before:
+            if key!='lesson_resources': self.assertEqual(before[key],after[key])
+        self.assertEqual(saved['instruction'],'no printing')
+
+    def test_resources_concurrent_revision_and_title_edit(self):
+        plan,r=self.resource_fixture();r=self.store.save_resource(r)
+        self.assertEqual(r['revision'],1)
+        changed=dict(r,title='My board questions');saved=self.store.save_resource(changed,1)
+        self.assertEqual(saved['revision'],2);self.assertEqual(saved['versions'][0]['title'],'Rounding')
+        with self.assertRaises(StorageError): self.store.save_resource(changed,1)
+        self.assertEqual(self.store.list_resources(plan['planning_date']),[saved])
+
+    def test_resource_changed_content_rejected_until_checked(self):
+        plan,r=self.resource_fixture();r['body']='Something else'
+        with self.assertRaises(StorageError): self.store.save_resource(r)
+        self.assertEqual(self.store.list_resources(plan['planning_date']),[])
+
+    def test_resource_stale_evidence_and_replaced_parent(self):
+        from planning_quality import digest
+        plan,r=self.resource_fixture();saved=self.store.save_resource(r)
+        self.store.save_document('teacher_profile',{'class_level':'1st Class'})
+        with self.assertRaises(StorageError): self.store.save_resource(dict(saved,title='New'),1)
+        plan['plan_id']='replacement';plan['planning_quality']['context_digest']=digest(self.store.planning_quality_context(plan['planning_date']))
+        self.store.save_day_plan(plan)
+        with self.assertRaises(StorageError): self.store.resource_context(plan['planning_date'],saved['plan_id'],saved['lesson_id'])
+        self.assertEqual(self.store.list_resources(plan['planning_date']),[saved])
+
+    def test_resource_backup_restore_retains_replaced_plan_snapshot(self):
+        plan,r=self.resource_fixture();saved=self.store.save_resource(r)
+        backup=self.store.export_backup();self.assertEqual(backup['format_version'],6)
+        # Keep resources independently of an active day plan (replaced/historical).
+        backup['day_plans']=[]
+        with self.connect(self.url) as connection:
+            for table in ['lesson_resources','monthly_plans','day_plans',*DOCUMENTS]: connection.execute(f'DELETE FROM {table}')
+        self.assertTrue(self.store.restore_backup(backup))
+        self.assertEqual(self.store.list_resources(plan['planning_date']),[saved])
+        self.assertFalse(self.store.restore_backup(backup))
+
+    def test_resource_backup_invalid_check_is_atomic(self):
+        plan,r=self.resource_fixture();self.store.save_resource(r);backup=self.store.export_backup()
+        backup['lesson_resources'][0]['body']='Unreviewed'
+        before=self.store.export_backup()
+        with self.assertRaises(StorageError): self.store.restore_backup(backup)
+        self.assertEqual(before,self.store.export_backup())
+
+    def test_resource_concurrent_save_has_one_winner(self):
+        plan,r=self.resource_fixture();saved=self.store.save_resource(r)
+        def write(title):
+            try: return self.store.save_resource(dict(saved,title=title),1)['revision']
+            except StorageError: return 'conflict'
+        with ThreadPoolExecutor(max_workers=2) as pool: results=list(pool.map(write,['One','Two']))
+        self.assertCountEqual(results,[2,'conflict'])
+        self.assertEqual(len(self.store.list_resources(plan['planning_date'])),1)
+
+    def test_resource_legacy_plan_generation_refused(self):
+        plan=sample_plan();self.store.save_day_plan(plan)
+        with self.assertRaises(StorageError): self.store.resource_context(plan['planning_date'],plan['plan_id'],plan['lessons'][0]['lesson_id'])
 
     def test_quality_metadata_backup_and_stale_context_guard(self):
         from planning_quality import digest
@@ -504,7 +583,7 @@ class StoreTests(unittest.TestCase):
     def test_new_backup_roundtrip_preserves_plans_and_lesson_snapshots(self):
         plan, position = self.save_sample()
         backup = self.store.export_backup()
-        self.assertEqual(backup["format_version"], 5)
+        self.assertEqual(backup["format_version"], 6)
         with self.connect(self.url) as connection:
             for table in ["lesson_progress", "day_plans", "actual_progress", *DOCUMENTS]:
                 connection.execute(f"DELETE FROM {table}")
