@@ -1,5 +1,5 @@
 """Optional item review and exception-only daily outcomes."""
-MODULE_VERSION = 2
+MODULE_VERSION = 3
 import json
 from uuid import uuid4
 import streamlit as st
@@ -13,12 +13,12 @@ def extract_items(client, monthly):
     schema = {'type': 'json_schema', 'name': 'monthly_learning_suggestions', 'strict': True,
         'schema': {'type': 'object', 'additionalProperties': False,
             'properties': {'items': {'type': 'array', 'items': {'type': 'object', 'additionalProperties': False,
-                'properties': {'subject': {'type': 'string'}, 'description': {'type': 'string'},
+                'properties': {'subject': {'type': 'string', 'enum': ['English', 'Gaeilge', 'Maths', 'History', 'Geography', 'Science', 'Music', 'Drama', 'Visual Arts', 'PE', 'SPHE', 'Religion', 'Other']}, 'description': {'type': 'string'},
                     'type': {'type': 'string', 'enum': list(TYPES)}, 'source_index': {'type': 'integer'}},
                 'required': ['subject', 'description', 'type', 'source_index']}}}, 'required': ['items']}}
     response = client.responses.create(model='gpt-5.4-mini', text={'format': schema}, input=(
-        'Extract distinct independently trackable learning items from this monthly plan. Preserve actual subject names. '
-        'Deduplicate matching objectives and activities; separate independently teachable aspects. '
+        'Extract independently trackable learning items from this monthly plan. Subject MUST be the actual curriculum subject (English, History, etc.), NEVER a strand, topic, skill or heading like Vocabulary, Money or The Great Irish Famine. '
+        'CRITICAL GRANULARITY: one separately checkable learning result per item. Never bundle a whole subject/topic section into one item. Split distinct objectives and activities even when they share a topic. For example, Famine causes/events, effects, push/pull factors, analysing immigrant letters, writing an immigrant letter, and creating/presenting a project need separate items when supplied. Procedural writing and morphology are English items, not subject names. Deduplicate an objective with its matching activity, but do not merge different activities into one broad summary. Do not create a duplicate overarching topic item when its discrete items already cover it. '
         'Use type discrete for a finite task, recurring for repeated practice, broad for ongoing objectives. '
         'Do not infer past progress. Set source_index to the numbered original document line that explicitly supports this item. '
         'Keep descriptions concise; cover all subjects. No invented pages or tasks.\n' +
