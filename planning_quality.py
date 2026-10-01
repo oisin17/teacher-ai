@@ -9,7 +9,7 @@ from timetable_constraints import interval, TIME_RANGE, singing_day
 from monthly_learning import planning_allowed, fingerprint
 
 RUBRIC_VERSION = 1
-QUALITY_MODULE_VERSION = 13
+QUALITY_MODULE_VERSION = 14
 CATEGORIES = ('alignment', 'progression', 'timetable', 'lesson_quality', 'practicality', 'specificity', 'usability')
 STATES = ('Pass', 'Revise', 'Blocked', 'Unchecked')
 HARD_CODES = ('unsupported_content', 'invalid_scope', 'unfinished_contradiction', 'completed_repetition', 'broad_completion', 'held_scope', 'unavailable_resource', 'missing_essential')
@@ -142,6 +142,7 @@ Decision boundaries (apply before emitting any finding):
 - broad_completion requires an affirmative candidate claim that the entire broad/recurring objective is finished. A statement that only part can be met is the OPPOSITE and must not trigger broad_completion. Do not turn a stated limitation into a completion claim.
 - unsupported_content requires an actual unsupported named reference or attributed content in the candidate. An approved item may include several examples/texts; teaching a relevant subset does not require naming/using ALL of them. A generic procedural extract or teacher-created board example without an unsupported named attribution is not fabricated programme content. Do not flag missing named references as unsupported_content. If actual activities fail to address the stated link, use invalid_scope with evidence of that mismatch.
 - requires_clarification is true only for the particular flagged item/scope, not its subject or other food/language items. Do not invent a hold.
+- Unknown carryover: "Gaeilge was not taught due to assembly" does NOT establish that the missed lesson was October food work. A recall phase followed by fixed food-topic phases is not resuming the unknown prior task. Require phases to resume the actual task identified at recall, without prescribing its topic from the new month. Separate new-month work may follow, clearly identified as NEW work; its links cannot establish prior scope. Apply the same rule to an unnamed English final activity. Block invalid_scope when a lesson silently substitutes new-month content for unknown prior work.
 - Quality findings require a concrete material delivery problem, not a preferred script or every original monthly activity. Modelled example + guided/independent practice + a usable CFU is a valid sequence when suitably timed. Prior knowledge recall is not a claim that new monthly content has been taught.
 REVISE: intention/activities mismatch, class level inappropriate, insufficient modelling before unfamiliar independent work, generic or absent meaningful CFU, unusable differentiation, busywork challenge, games without learning purpose, excessive preparation/printing, unrealistic delivery for one teacher, vague focus despite available content, unnecessary scripts, overloaded objectives or transitions. Do not require modelling for already familiar independent consolidation. Do not require games, printing, early finishers or all subjects every day. Preserve available resources and core teaching entitlement.
 For every outstanding carryover ID, decide addressed or deferred. Addressed requires explicit phases continuing that actual task and its exact link. Deferral requires a specific sensible reason tied to today's timetable/coverage; do not force all carryover onto day one. Merely saying 'later' is insufficient; repeated unexplained deferral is a material revise finding. Removal/completion overrides stale older progress. No outcome/status changes are authorised. For each finding select the evidence_id of an actual supporting passage and identify a 0-based lesson index (-1 for whole day). Do not invent evidence or pass solely because the generator claims it checked itself.'''
@@ -253,7 +254,7 @@ def evaluate_candidate(plan, context, client):
                 'decision':{'type':'string','enum':['addressed' if any(id in l.get('carryover_ids',[]) for l in plan['lessons']) else 'deferred']},
                 'reason':{'type':'string'}}) for id in sorted(outstanding)},
             'required':sorted(outstanding)}
-    response = client.responses.create(model='gpt-5.4-mini',reasoning={'effort':'low'},text={'format':review_format},max_output_tokens=5000,
+    response = client.responses.create(model='gpt-5.4',reasoning={'effort':'low'},text={'format':review_format},max_output_tokens=5000,
         input=REVIEW_RULES+'\nCARRYOVER DECISION SCHEMA: addressed means the candidate explicitly schedules this ID; deferred means it does not. These scheduling labels are fixed from links. Independently check whether actual phases fulfil EVERY scheduled carryover; if not, emit invalid_scope/unfinished_contradiction and BLOCK rather than changing its scheduling label. A fixed addressed label is NEVER proof of valid coverage. Explain the scope match or valid deferral in reason.\nSOURCE-REFERENCED PACKET: each text has an evidence_id; long text has ordered contiguous passages. Select the evidence_id of the actual passage supporting each finding. Never retype/paraphrase evidence. IDs refer to passages only, not learning item IDs.\n'+json.dumps(packet,ensure_ascii=False))
     report = json.loads(response.output_text)
     if set(report['checked_categories']) != set(CATEGORIES) or len(report['checked_categories']) != len(CATEGORIES):
@@ -344,7 +345,7 @@ def repair_phase_budgets(plan, findings, context, client):
             intention=lesson['learning_intention'],fixed_phase_minutes=dict(zip(phase_keys,minutes))))
     format={'type':'json_schema','name':'planning_phase_repair','strict':True,'schema':{
         'type':'object','additionalProperties':False,'properties':properties,'required':list(properties)}}
-    response=client.responses.create(model='gpt-5.4-mini',text={'format':format},input=
+    response=client.responses.create(model='gpt-5.4-mini',reasoning={'effort':'low'},text={'format':format},input=
         'Perform the ONE targeted timing repair for this day. Timetable, lesson identity, intentions and learning links are FIXED. '
         'Code supplies exact phase minutes: return ONLY concise activity strings for each fixed phase plus revised resource/differentiation/CFU details. '
         'Simplify and rewrite activities to FIT each budget; do not squeeze an oversized lesson unchanged into it. '
@@ -393,7 +394,7 @@ def quality_gate(plan, context, client, generation_format):
                 minute_adjustments=repair_phase_budgets(plan,report['findings'],context,client)
             else:
                 repair_kind='whole_plan'
-                response=client.responses.create(model='gpt-5.4-mini',text={'format':generation_format},
+                response=client.responses.create(model='gpt-5.4-mini',reasoning={'effort':'low'},text={'format':generation_format},
                     input='Repair this daily plan ONLY to resolve the listed material findings. Preserve correct teaching and protected routines. Use exact source-backed content; never alter learning outcomes. Return the whole corrected plan, not review JSON. For EVERY linked carryover ID, include a Carryover reference line in details quoting its learning text from EVIDENCE VERBATIM (including punctuation); phases must identify and resume that actual prior task. Do not substitute a new-month topic for an unknown prior task. Each lesson needs phases [{minutes: positive integer, activity: concise description}]; phase totals equal clock duration, including setup and tidy-up. Do not duplicate phases in details. '+REVIEW_RULES+'\nTIMING CHECK: Keep each lesson time identical to its overview row. First compute end minus start; then allocate positive whole phase minutes summing to that exact number. Do not lengthen a lesson into protected blocks to fit activities.\nEVIDENCE:\n'+json.dumps(review_context(context),ensure_ascii=False)+'\nPROTECTED BLOCKS FOR THIS DATE (EXACT):\n'+json.dumps([dict(time=f'{a//60:02}:{a%60:02}–{b//60:02}:{b%60:02}',name=name) for a,b,name in protected_blocks(context)],ensure_ascii=False)+'\nFINDINGS:\n'+json.dumps(report['findings'],ensure_ascii=False)+'\nCANDIDATE:\n'+json.dumps(plan,ensure_ascii=False))
                 plan=parse_generated_plan(response.output_text,context['planning_date'])
                 plan['monthly_plan']={k:context['monthly_plan'][k] for k in ('id','title','start_date','end_date')}
