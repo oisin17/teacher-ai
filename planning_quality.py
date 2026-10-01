@@ -9,7 +9,7 @@ from timetable_constraints import interval, TIME_RANGE, singing_day
 from monthly_learning import planning_allowed, fingerprint
 
 RUBRIC_VERSION = 1
-QUALITY_MODULE_VERSION = 4
+QUALITY_MODULE_VERSION = 5
 CATEGORIES = ('alignment', 'progression', 'timetable', 'lesson_quality', 'practicality', 'specificity', 'usability')
 STATES = ('Pass', 'Revise', 'Blocked', 'Unchecked')
 HARD_CODES = ('unsupported_content', 'invalid_scope', 'unfinished_contradiction', 'completed_repetition', 'broad_completion', 'held_scope', 'unavailable_resource', 'missing_essential')
@@ -173,7 +173,7 @@ def evaluate_candidate(plan, context, client):
         if f['code'] in HARD_CODES:
             f['severity'] = 'Blocked'
         if f['severity'] not in ('Blocked','Revise') or not f['message'].strip() or not f['evidence'].strip() or json.dumps(f['evidence'],ensure_ascii=False)[1:-1] not in blob or not -1 <= f['lesson_index'] < len(plan['lessons']):
-            raise ValueError('Unverifiable rubric finding')
+            raise ValueError(f"Unverifiable rubric finding ({f['code']}, lesson index {f['lesson_index']}): {f['evidence'][:200]}")
     decisions = report['carryover_decisions']
     outstanding = {c['id'] for c in context['carryover'] if c['state']=='outstanding'}
     if len(decisions) != len(outstanding) or {d['id'] for d in decisions} != outstanding:
