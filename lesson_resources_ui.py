@@ -4,6 +4,8 @@ import streamlit as st
 from lesson_resources import TYPES, suggestions, generate, review, digest, checked_digest, ResourceFailure
 from persistence import StorageError
 
+MODULE_VERSION = 2
+
 
 def _message(error):
  st.error(str(error))
@@ -86,7 +88,7 @@ def lesson_panel(store,client,plan,lesson,saved):
  if st.button('Create resources / saved resources',key=key+'_open'):
   st.session_state[key+'_visible']=not st.session_state.get(key+'_visible',False)
  if not st.session_state.get(key+'_visible',False): return
- with st.expander('Create resources / saved resources'):
+ with st.expander('Create resources / saved resources', expanded=True):
   if plan.get('planning_quality',{}).get('state')!='Pass':
    st.caption('New resource generation requires a saved rubric-approved plan. Historical lessons remain unchanged.');return
   more=st.checkbox('More resource options',key=key+'_more')
