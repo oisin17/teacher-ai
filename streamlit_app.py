@@ -435,6 +435,7 @@ if page == "Today":
                 try:
                     learning_items = storage_call(store.list_learning_items, None, planning_date.isoformat())
                     current_items = [i for i in learning_items if not i["archived"] and ((i["monthly_plan_id"] == selected_monthly["id"] and i["fingerprint"] == fingerprint(selected_monthly["plan_text"])) or i["id"] in {c.get("monthly_item_id") for c in outstanding_carryover})]
+                    generation_items = [{"item_id": i["id"], **{k: i[k] for k in ("subject", "description", "type", "status", "remaining", "evidence")}} for i in current_items]
                     recent_progress = load_recent_progress()
                     current_learning_position = load_current_learning_position()
                     st.session_state["current_learning_position"] = current_learning_position
@@ -528,7 +529,7 @@ if page == "Today":
                             "Teacher notes override both the selected status and any conflicting planned intention. "
                             "Use newer dated evidence ahead of older entries; never assume a completed lesson finishes its unit.\n\n"
 
-                            f"CONFIRMED MONTHLY LEARNING ITEMS (status and remaining learning are authoritative):\n{current_items}\n"
+                            f"CONFIRMED MONTHLY LEARNING ITEMS (status and remaining learning are authoritative):\n{generation_items}\n"
                             "For every lesson addressing a confirmed item, put its exact item_id and the specific addressed scope in monthly_item_links. Use [] when no confirmed item applies. Never fabricate IDs, link just by subject, repeat completed items, or claim one lesson finishes a recurring/broad objective. Plan remaining learning instead of repeating already completed aspects. Include 'Monthly item:' plus the exact ID and addressed scope in lesson details.\n"
                             f"TEACHER PROFILE:\n{teacher_profile}\n\n"
                             f"WEEKLY TIMETABLE:\n{timetable_text}\n\n"
@@ -560,7 +561,7 @@ if page == "Today":
                     validate_protected_plan(generated_plan, teacher_profile)
                     retain_explicit_links(generated_plan, outstanding_carryover)
                     generated_plan["monthly_plan"] = {key: selected_monthly[key] for key in ("id", "title", "start_date", "end_date")}
-                    storage_call(store.save_day_plan, generated_plan)
+                    store.save_day_plan(generated_plan)
                     day_state = {"plan": generated_plan, "progress": None}
                     st.session_state["todays_plan"] = plan_markdown(generated_plan)
                     st.session_state["todays_plan_date"] = planning_date.isoformat()
