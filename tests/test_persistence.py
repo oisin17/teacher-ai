@@ -78,6 +78,36 @@ class StoreTests(unittest.TestCase):
         self.patcher.stop()
         self.temp.cleanup()
 
+    def test_quality_metadata_backup_and_stale_context_guard(self):
+        from planning_quality import digest
+        self.store.save_monthly_plan(self.monthly(), True)
+        plan = sample_plan('2026-09-30')
+        context = self.store.planning_quality_context('2026-09-30')
+        plan['monthly_plan'] = {k: context['monthly_plan'][k] for k in ('id','title','start_date','end_date')}
+        plan['planning_quality'] = dict(version=1, state='Pass', context_digest=digest(context), revision_count=0, extra_ai_calls=1)
+        before = self.store.export_backup()
+        self.store.save_day_plan(plan)
+        after = self.store.export_backup()
+        self.assertEqual(after['day_plans'][0]['planning_quality'], plan['planning_quality'])
+        for key in before:
+            if key != 'day_plans': self.assertEqual(before[key], after[key])
+        self.store.save_document('current_learning_position', {'English':'Teacher corrected the stopping point'})
+        with self.assertRaises(StorageError): self.store.save_day_plan(plan)
+        self.assertEqual(self.store.load_day('2026-09-30')['plan'], plan)
+        for state in ('Unchecked','Blocked','Revise'):
+            plan['planning_quality']['state'] = state
+            with self.assertRaises(StorageError): self.store.save_day_plan(plan)
+        backup = self.store.export_backup()
+        with patch('persistence.psycopg.connect', side_effect=lambda *a, **k: SQLiteAdapter(self.root / 'quality-restored.db')):
+            restored = Store('test-only'); restored.initialise(self.root / 'absent.db'); restored.restore_backup(backup)
+            self.assertEqual(restored.load_day('2026-09-30')['plan'], backup['day_plans'][0])
+
+    def test_quality_context_includes_prior_progress_not_future(self):
+        self.store.save_progress('2026-09-30','Wednesday','Partially completed','English final activity unfinished')
+        self.store.save_progress('2026-10-02','Friday','Not taught','Future record')
+        context = self.store.planning_quality_context('2026-10-01')
+        self.assertEqual([r['planning_date'] for r in context['recent_progress']], ['2026-09-30'])
+
     def test_review_confirmation_date_guard_and_concurrent_once(self):
         self.store.save_monthly_plan(self.monthly(), True)
         monthly = self.monthly("oct", "2026-10-01", "2026-10-31")

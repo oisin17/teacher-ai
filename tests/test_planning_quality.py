@@ -1,0 +1,103 @@
+import copy
+import json
+import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock
+from planning_quality import CATEGORIES, code_checks, quality_gate, QualityFailure, digest, evaluate_candidate
+from fixtures import sample_plan
+
+
+def context(day='2026-10-01'):
+    return dict(planning_date=day,monthly_plan=dict(id='oct',title='October',start_date='2026-10-01',end_date='2026-10-31',plan_text='English narrative.'),
+        teacher_profile={},planning_setup={},current_learning_position={'English':'Final activity unfinished; Gaeilge not taught due to assembly'},recent_progress=[],learning_items=[],carryover=[])
+
+
+def candidate(c):
+    p=sample_plan(c['planning_date']);p['monthly_plan']={k:c['monthly_plan'][k] for k in ('id','title','start_date','end_date')};return p
+
+
+def review(findings=None, decisions=None):
+    return SimpleNamespace(output_text=json.dumps(dict(checked_categories=list(CATEGORIES),findings=findings or [],carryover_decisions=decisions or [])))
+
+
+class QualityTests(unittest.TestCase):
+    def test_code_checks_run_before_model_and_one_repair_limit(self):
+        c=context();p=candidate(c);p['lessons'][0]['phases'][0]['minutes']=50
+        client=Mock();client.responses.create.return_value=SimpleNamespace(output_text=json.dumps({k:p[k] for k in ('overview','lessons')}))
+        with self.assertRaises(QualityFailure) as raised:quality_gate(p,c,client,{})
+        self.assertEqual(raised.exception.report['state'],'Blocked');self.assertEqual(client.responses.create.call_count,1)
+        self.assertIn('phase_duration',{f['code'] for f in raised.exception.report['findings']})
+
+    def test_repair_pass_and_metadata(self):
+        c=context();p=candidate(c);fixed=copy.deepcopy(p);p['lessons'][0]['phases'][0]['minutes']=50
+        client=Mock();client.responses.create.side_effect=[SimpleNamespace(output_text=json.dumps({k:fixed[k] for k in ('overview','lessons')})),review()]
+        result=quality_gate(p,c,client,{})
+        self.assertEqual(result['planning_quality']['state'],'Pass');self.assertEqual(result['planning_quality']['extra_ai_calls'],2)
+        self.assertEqual(result['planning_quality']['revision_count'],1);self.assertEqual(result['planning_quality']['context_digest'],digest(c))
+
+    def test_first_pass_one_review_no_mutation(self):
+        c=context();p=candidate(c);before=copy.deepcopy(c);client=Mock();client.responses.create.return_value=review()
+        result=quality_gate(p,c,client,{})
+        self.assertEqual(result['planning_quality']['extra_ai_calls'],1);self.assertEqual(c,before)
+
+    def test_semantic_hard_blockers_are_not_downgraded(self):
+        c=context();p=candidate(c)
+        for code in ('unsupported_content','unfinished_contradiction','completed_repetition','broad_completion'):
+            with self.subTest(code=code):
+                f=dict(code=code,severity='Blocked',lesson_index=1,message='Violates teacher evidence',evidence='Final activity unfinished')
+                client=Mock();client.responses.create.side_effect=[review([f]),SimpleNamespace(output_text=json.dumps({k:p[k] for k in ('overview','lessons')})),review([f])]
+                with self.assertRaises(QualityFailure) as raised:quality_gate(copy.deepcopy(p),c,client,{})
+                self.assertEqual(raised.exception.report['state'],'Blocked');self.assertEqual(client.responses.create.call_count,3)
+
+    def test_nonnegotiable_codes_cannot_be_softened_by_reviewer(self):
+        c=context();p=candidate(c);client=Mock()
+        client.responses.create.return_value=review([dict(code='completed_repetition',severity='Revise',lesson_index=0,message='Repeats completed learning',evidence=p['lessons'][0]['topic'])])
+        report,_=evaluate_candidate(p,c,client)
+        self.assertEqual(report['state'],'Blocked')
+
+    def test_legitimate_retrieval_and_carryover_deferral(self):
+        c=context();c['carryover']=[dict(id='carry',state='outstanding',learning='Finish final activity')]
+        p=candidate(c);p['lessons'][0]['phases'][0]['activity']='Brief retrieval of completed addition before new rounding'
+        client=Mock();client.responses.create.return_value=review(decisions=[dict(id='carry',decision='deferred',reason='No English writing slot today after protected Sport; next writing lesson')])
+        result=quality_gate(p,c,client,{})
+        self.assertEqual(result['planning_quality']['state'],'Pass');self.assertEqual(c['carryover'][0]['state'],'outstanding')
+
+    def test_unchecked_is_fail_closed(self):
+        c=context();p=candidate(c)
+        for output in ('bad json',json.dumps(dict(checked_categories=[],findings=[],carryover_decisions=[]))):
+            client=Mock();client.responses.create.return_value=SimpleNamespace(output_text=output)
+            with self.assertRaises(QualityFailure) as raised:quality_gate(p,c,client,{})
+            self.assertEqual(raised.exception.report['state'],'Unchecked')
+
+    def test_unverifiable_findings_and_missing_carryover_fail_closed(self):
+        c=context();p=candidate(c);client=Mock();client.responses.create.return_value=review([dict(code='x',severity='Blocked',lesson_index=1,message='bad',evidence='invented evidence')])
+        with self.assertRaises(ValueError):evaluate_candidate(p,c,client)
+        c['carryover']=[dict(id='carry',state='outstanding')];client.responses.create.return_value=review()
+        with self.assertRaises(ValueError):evaluate_candidate(p,c,client)
+
+    def test_date_boundary_and_all_item_state_blockers(self):
+        from monthly_learning import fingerprint
+        c=context();p=candidate(c);p['planning_date']='2026-09-30'
+        self.assertIn('monthly_date',{f['code'] for f in code_checks(p,c)})
+        p=candidate(c);item=dict(id='i',monthly_plan_id='oct',archived=False,requires_clarification=False,status='Not started',fingerprint=fingerprint(c['monthly_plan']['plan_text']))
+        p['lessons'][1]['monthly_item_links']=[dict(item_id='i',coverage='narrative')]
+        for changes in ({},{'archived':True},{'requires_clarification':True},{'status':'Completed'},{'monthly_plan_id':'sept'},{'fingerprint':'stale'}):
+            c['learning_items']=[dict(item,**changes)]
+            self.assertEqual('invalid_item' in {f['code'] for f in code_checks(p,c)},bool(changes))
+
+    def test_protected_daily_weekly_and_singing(self):
+        c=context();c['teacher_profile']={'thursday_singing':True,'recurring_arrangements':'Daily\n10:45–11:00 Lunch\n11:00–11:15 Yard\n13:05–13:20 DEAR\n14:20–14:30 Pack Up\nWeekly\nFriday 11:15–11:45 Sport\nFriday afternoon Art'}
+        p=candidate(c);p['overview']+='\n10:45–11:00 Lunch\n11:00–11:15 Yard\n13:05–13:20 DEAR\n13:50–14:00 Pack Up\n14:00–14:30 Singing'
+        self.assertEqual(code_checks(p,c),[])
+        p['lessons'][2]['time']='14:00–14:30'
+        self.assertIn('protected_overlap',{f['code'] for f in code_checks(p,c)})
+        c['planning_date']='2026-10-02';p=candidate(c)
+        codes={f['code'] for f in code_checks(p,c)};self.assertIn('friday_art',codes);self.assertIn('protected_overlap',codes)
+
+    def test_overlaps_and_exact_phase_total(self):
+        c=context();p=candidate(c);p['lessons'][1]['time']='09:40–10:10'
+        self.assertIn('lesson_overlap',{f['code'] for f in code_checks(p,c)})
+        p=candidate(c);p['overview']+='\n09:40–09:50 Another lesson'
+        self.assertIn('overview_overlap',{f['code'] for f in code_checks(p,c)})
+        p=candidate(c);p['lessons'][0]['phases'][0]['minutes']=True
+        self.assertIn('phase_duration',{f['code'] for f in code_checks(p,c)})
