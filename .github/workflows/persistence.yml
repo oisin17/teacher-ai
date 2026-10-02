@@ -31,3 +31,7 @@ jobs:
         env:
           TEST_DATABASE_URL: postgresql://test_teacher:test_only_password@localhost:5432/test_teacher_ai
         run: python -m unittest discover -s tests -p test_persistence.py -v
+      - name: PostgreSQL 16 workspace migration, restricted-role RLS and adversarial isolation
+        env:
+          TEST_WORKSPACE_DATABASE_URL: postgresql://test_teacher:test_only_password@localhost:5432/test_teacher_ai
+        run: python -m unittest discover -s tests -p "test_workspace*.py" -v

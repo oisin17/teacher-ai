@@ -11,6 +11,13 @@ diagnostics and fixes deployed. Resources for Tomorrow V1 remains complete.
 See TEACHER_AI_HARDENING_REVIEW.md and the final review section below. Prior
 Resources for Tomorrow acceptance/data/restore evidence remains preserved.
 
+**Active staged work:** workspace migration/isolation implemented and rehearsed on
+an isolated branch. Production cutover remains BLOCKED by administration/snapshot
+access; do not merge/deploy this branch onto the working app yet. Main remains
+`d8c4cb6`. See WORKSPACE_MIGRATION_RUNBOOK.md and WORKSPACE_MIGRATION_REHEARSAL.json.
+Local scoped branch: 252 tests pass, including 147 cases against PostgreSQL 16.
+Published CI confirmation is pending at this checkpoint. No OIDC, pooling or invites.
+
 ## 1. Product vision
 
 Teacher AI is an adaptive planning assistant for primary-school teachers.
@@ -1466,3 +1473,56 @@ and some progress edits still have last-write-wins behavior despite serialized
 transactions; add optimistic revision checks with conflict UX/tests. Current
 tracked inventory has no database/backup/secrets file; ignores cover secrets and
 SQLite files. This review does not certify full historical credential scanning.
+
+## Workspace isolation — implementation/rehearsal checkpoint (2026-10-02)
+
+User approved invite-only/Google-later/one-owner/workspace data ownership, same-workspace
+empty restore, no co-teaching UI/durable drafts yet, and pooling only after scoped
+isolation is complete/measured. Implementation is on beta/workspace-isolation,
+NOT on live main. Hardening remains the latest completed/deployed milestone.
+
+Explicit immutable scope and per-transaction membership/restricted-role/RLS checks;
+workspace SQL and advisory locks; FORCE RLS on all class tables/import ledger;
+non-login schema owner versus migration/admin/runtime roles; composite singleton,
+date and parent keys; deferred JSON lineage/reference checks; format-7 export/restore;
+admin-only old-format isolated recovery; namespaced session/draft/widget/download
+buffers with cleanup on scope change/denial. Runtime cannot initialize schemas or
+fall back to a global workspace. Owner bridge requires explicit private-hosting
+confirmation and scope IDs; no automatic email matching or OIDC identity invented.
+Planning rubric V18 and resource/Tomorrow generation engines remain unchanged.
+Runtime storage V15, monthly learning V4, resource UI V11, monthly UI V8.
+
+Full local suite 252 passed with isolated PostgreSQL 16.15: original 165, 52 existing
+business regressions on restricted scoped Store, 35 scope/isolation cases (32 PG,
+3 unit). 147 distinct PG cases = 63 legacy-admin + 84 scoped runtime/rehearsal.
+Every public Store method checks revoked membership. Tests also cover direct RLS,
+JSON/FK forgeries, stale parents/revisions, same-day independence, scoped restoration,
+sequence reservation, concurrent restores/locks, migration rollback, privileged-role
+rejection, RLS misconfiguration and real scoped Streamlit navigation/reopen/denial.
+Synthetic outcomes exist only in isolated automated fixtures; all AI is mocked.
+
+Fresh live format-6 export downloaded: 471,839 bytes, SHA256
+7e5bbc694058d696b472c4b6cb621539dfada4641ddd19d98c3fb94e7d648d7c.
+It restored and re-exported exactly in isolated PG; after workspace backfill,
+every original-column count/checksum matched and full scoped payload equalled it.
+Canonical payload checksum before/after:
+ab273d25a2727a816ce16cacf072f2cdab48b10dceb480a9ad49ad835c50318f.
+Clone counts: profiles/setup/current 1 each; actual progress 1, lesson progress 0,
+day plans 2, monthly plans 2, learning items 349, updates 0, period reviews 1,
+carryover 2, resource records 7. All IDs/statuses/dates/versions/snapshots preserved.
+These are clone evidence, not raw production-database inventory results.
+
+PRODUCTION MIGRATION NOT PERFORMED. No production database credentials/provider
+snapshot capability or Streamlit maintenance/secrets controls were available;
+ordinary app UI only. The fresh app export is not a database snapshot. Required
+next gate: authenticated admin/deployment access; close/drain writes; take new export
+and database snapshot; verify snapshot by isolated restore; restricted role provisioning
+and private-hosting verification; actual cutover/export/raw-inventory checks; then owner
+reopen. Rollback instructions are recorded before any scoped production writes.
+Do not create invitations, add OIDC/pooling, or claim owner deployment is beta-ready.
+
+Rare restore reserves global numeric progress IDs under a shared progress/sequence
+lock; ordinary workspace locks remain independent. RLS settings trust the server's
+identity boundary; future OIDC must supply verified internal identity/membership.
+Checksum is not signed backup provenance. Historical snapshots remain embedded;
+immutable version registry, manual-event timezone and optimistic-edit debt remain.

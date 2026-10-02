@@ -395,3 +395,15 @@ Concise categories:
 - **Needs teacher/product-owner decision:** OIDC provider, access/ownership,
   pupil-data/retention policy, cloning/import semantics, draft recovery and the
   bounded-pool proposal.
+
+## Approved workspace isolation implementation — staged checkpoint
+
+See WORKSPACE_MIGRATION_RUNBOOK.md for the implemented ownership/RLS/role/backup
+boundaries and pre-write rollback gates; WORKSPACE_MIGRATION_REHEARSAL.json holds
+exact original-column clone inventories. The owner approved product decisions and
+migration design; code is prepared on beta/workspace-isolation, not deployed.
+252 tests pass locally, including 147 PostgreSQL cases and actual restricted-role
+RLS plus scoped Streamlit navigation. A fresh production export survives isolated
+migration with complete payload/count/checksum equivalence. No production cutover,
+snapshot or production restricted-role verification is claimed. Main/live app stays
+d8c4cb6 pending administration, snapshot and owner-private-hosting access.

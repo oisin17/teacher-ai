@@ -11,7 +11,8 @@ from unittest.mock import patch
 from urllib.parse import urlparse
 
 import psycopg
-from persistence import DOCUMENTS, Store, StorageError
+from persistence import DOCUMENTS, StorageError
+from legacy_storage_admin import LegacyStore as Store
 from fixtures import sample_plan, outcomes
 from lesson_progress import EVIDENCE_MARKER
 

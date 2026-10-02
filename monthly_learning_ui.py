@@ -1,5 +1,6 @@
 """Optional item review and exception-only daily outcomes."""
-MODULE_VERSION = 7
+from workspace_scope import scoped_state
+MODULE_VERSION = 8
 import json
 from uuid import uuid4
 import streamlit as st
@@ -47,7 +48,7 @@ def review_items(store, client, monthly, call):
     for i in held:
         st.info('Awaiting teacher clarification — excluded from planning priorities: ' + display_wording(i))
     with st.expander('Apply a reviewed regrouping file'):
-        uploaded = st.file_uploader('Reviewed regrouping JSON', type=['json'], key='regroup_file_' + monthly['id'])
+        uploaded = st.file_uploader('Reviewed regrouping JSON', type=['json'], key=scoped_state(st).widget_key('regroup_file_' + monthly['id']))
         if uploaded is not None:
             try:
                 bundle = json.loads(uploaded.getvalue())
@@ -55,8 +56,8 @@ def review_items(store, client, monthly, call):
                 st.caption('Historical IDs and lessons are retained. New scopes start Not started; parent completion is not copied.')
                 for subject in sorted({i['subject'] for i in active}):
                     st.write(f"{subject}: {sum(i['subject'] == subject for i in active)} reviewed items")
-                confirmed = st.checkbox('Apply this teacher-approved regrouping', key='regroup_confirm_' + monthly['id'])
-                if st.button('Apply reviewed regrouping', key='regroup_apply_' + monthly['id']):
+                confirmed = st.checkbox('Apply this teacher-approved regrouping', key=scoped_state(st).widget_key('regroup_confirm_' + monthly['id']))
+                if st.button('Apply reviewed regrouping', key=scoped_state(st).widget_key('regroup_apply_' + monthly['id'])):
                     call(store.apply_reviewed_regrouping, monthly, bundle, confirmed)
                     st.success('Reviewed regrouping saved. Historical teaching records were preserved.')
                     st.rerun()
@@ -68,41 +69,41 @@ def review_items(store, client, monthly, call):
         st.warning('This document changed. Archive affected old items and review new suggestions; historical lesson references remain intact.')
     if not saved or changed_document:
         st.caption('Suggest learning items once, then review and save. Original document text stays intact. No past completion is inferred.')
-        if st.button('Suggest learning items', key=key + '_extract'):
+        if st.button('Suggest learning items', key=scoped_state(st).widget_key(key + '_extract')):
             try:
                 with st.spinner('Reading Monthly Plan learning items…'):
-                    st.session_state[key] = [{**i, 'archived': True} for i in saved] + extract_items(client, monthly)
+                    scoped_state(st)[key] = [{**i, 'archived': True} for i in saved] + extract_items(client, monthly)
             except Exception:
                 st.error('Extraction could not be verified. Your saved plan is unchanged; try again.')
-    if saved and key not in st.session_state:
-        st.session_state[key] = saved
-    if key not in st.session_state:
+    if saved and key not in scoped_state(st):
+        scoped_state(st)[key] = saved
+    if key not in scoped_state(st):
         return
-    drafts = st.session_state[key]
+    drafts = scoped_state(st)[key]
     with st.expander('Review / edit learning items', expanded=not saved):
         with st.form(key + '_form'):
             edited = []
             for item in drafts:
                 with st.expander(f"{item['subject']} — {display_wording(item)} ({item.get('status', 'Not started')})"):
                     st.caption('Source: ' + item['source'])
-                    subject = st.text_input('Subject', value=item['subject'], key=key + item['id'] + 'subject')
-                    description = st.text_area('Learning item', value=item['description'], max_chars=1000, key=key + item['id'] + 'desc')
-                    kind = st.selectbox('Item type', TYPES, index=TYPES.index(item['type']), key=key + item['id'] + 'type')
-                    clarification = st.checkbox('Requires teacher clarification before planning', value=item.get('requires_clarification', False), key=key + item['id'] + 'clarification')
-                    correction = st.text_input('Display correction (optional; original source stays unchanged)', value=item.get('display_correction', ''), max_chars=1000, key=key + item['id'] + 'display')
-                    correction_confirmed = st.checkbox('I confirm this display correction', value=False, key=key + item['id'] + 'display_confirm')
+                    subject = st.text_input('Subject', value=item['subject'], key=scoped_state(st).widget_key(key + item['id'] + 'subject'))
+                    description = st.text_area('Learning item', value=item['description'], max_chars=1000, key=scoped_state(st).widget_key(key + item['id'] + 'desc'))
+                    kind = st.selectbox('Item type', TYPES, index=TYPES.index(item['type']), key=scoped_state(st).widget_key(key + item['id'] + 'type'))
+                    clarification = st.checkbox('Requires teacher clarification before planning', value=item.get('requires_clarification', False), key=scoped_state(st).widget_key(key + item['id'] + 'clarification'))
+                    correction = st.text_input('Display correction (optional; original source stays unchanged)', value=item.get('display_correction', ''), max_chars=1000, key=scoped_state(st).widget_key(key + item['id'] + 'display'))
+                    correction_confirmed = st.checkbox('I confirm this display correction', value=False, key=scoped_state(st).widget_key(key + item['id'] + 'display_confirm'))
                     if correction != item.get('display_correction', '') and not correction_confirmed:
                         correction = item.get('display_correction', '')
                         st.caption('Confirm a changed display correction before saving it.')
-                    archived = st.checkbox('Archived (uncheck to restore)', value=item['archived'], key=key + item['id'] + 'archive')
-                    split = st.text_area('Split into new items (optional; one per line)', key=key + item['id'] + 'split', help='Archives this item; new items receive new IDs and start Not started.')
+                    archived = st.checkbox('Archived (uncheck to restore)', value=item['archived'], key=scoped_state(st).widget_key(key + item['id'] + 'archive'))
+                    split = st.text_area('Split into new items (optional; one per line)', key=scoped_state(st).widget_key(key + item['id'] + 'split'), help='Archives this item; new items receive new IDs and start Not started.')
                     edited.append({**item, 'subject': subject, 'description': description, 'type': kind, 'requires_clarification': clarification, 'display_correction': correction, 'archived': archived or bool(split.strip())})
                     for line in split.splitlines():
                         if line.strip():
                             edited.append({**item, 'id': uuid4().hex, 'revision': 0, 'split_from': item['id'], 'description': line.strip(), 'archived': False})
             active = [i for i in drafts if not i['archived']]
-            merge = st.multiselect('Merge duplicate / overlapping items', [i['id'] for i in active], format_func=lambda id: next(i['subject'] + ' — ' + display_wording(i) for i in active if i['id'] == id), key=key + '_merge')
-            merged_description = st.text_input('Merged item description', key=key + '_merged_text')
+            merge = st.multiselect('Merge duplicate / overlapping items', [i['id'] for i in active], format_func=lambda id: next(i['subject'] + ' — ' + display_wording(i) for i in active if i['id'] == id), key=scoped_state(st).widget_key(key + '_merge'))
+            merged_description = st.text_input('Merged item description', key=scoped_state(st).widget_key(key + '_merged_text'))
             save = st.form_submit_button('Save learning items', type='primary')
         if save:
             if merge:
@@ -117,12 +118,12 @@ def review_items(store, client, monthly, call):
                 first = selected[0]
                 edited.append({**first, 'id': uuid4().hex, 'revision': 0, 'description': merged_description.strip(), 'archived': False, 'type': 'broad' if any(i['type'] != 'discrete' for i in selected) else 'discrete', 'merged_from': merge, 'sources': [i['source'] for i in selected]})
             call(store.save_learning_items, monthly, edited)
-            st.session_state.pop(key, None)
+            scoped_state(st).pop(key, None)
             st.success('Learning items saved. Split/merged replacements need their own confirmed evidence; historical IDs are retained.')
             st.rerun()
     if saved:
         with st.expander('Correct an item status or remaining learning'):
-            selected_id = st.selectbox('Item to correct', [i['id'] for i in saved], format_func=lambda id: next(i['subject'] + ' — ' + display_wording(i) for i in saved if i['id'] == id), key=key + '_correct')
+            selected_id = st.selectbox('Item to correct', [i['id'] for i in saved], format_func=lambda id: next(i['subject'] + ' — ' + display_wording(i) for i in saved if i['id'] == id), key=scoped_state(st).widget_key(key + '_correct'))
             item = next(i for i in saved if i['id'] == selected_id)
             with st.form(key + selected_id + '_correction'):
                 status = st.selectbox('Item status', STATUSES, index=STATUSES.index(item['status']))
@@ -132,7 +133,7 @@ def review_items(store, client, monthly, call):
                 submit = st.form_submit_button('Save item correction')
             if submit:
                 call(store.correct_learning_item, selected_id, status, remaining, evidence, confirm)
-                st.session_state.pop(key, None)
+                scoped_state(st).pop(key, None)
                 st.rerun()
 
 
@@ -148,16 +149,16 @@ def item_inputs(lesson, prefix, items):
             st.caption('Default: taught work becomes In progress; Not taught changes nothing. Change only exceptions. Save accepts these item outcomes.')
             key = prefix + lesson['lesson_id'] + item['id']
             old = existing.get(item['id'], {})
-            pending = st.session_state.pop(key + '_pending', None)
+            pending = scoped_state(st).pop(key + '_pending', None)
             if pending:
-                st.session_state[key + '_outcome'] = pending['status']
-                st.session_state[key + '_remaining'] = pending['remaining']
-                st.session_state[key + '_complete'] = False
+                scoped_state(st)[key + '_outcome'] = pending['status']
+                scoped_state(st)[key + '_remaining'] = pending['remaining']
+                scoped_state(st)[key + '_complete'] = False
                 st.caption('AI suggestion — review and accept by saving. Whole-item completion still requires your explicit checkbox.')
             options = ['Use conservative lesson outcome'] + list(STATUSES)
-            chosen = st.selectbox('Item outcome', options, index=options.index(old.get('status', options[0])), key=key + '_outcome')
-            remaining = st.text_input('Specific unfinished aspect (optional)', value=old.get('remaining', ''), max_chars=1000, key=key + '_remaining')
-            confirm = st.checkbox('Whole item completed — explicitly confirm', value=old.get('confirmed_complete', False), key=key + '_complete')
+            chosen = st.selectbox('Item outcome', options, index=options.index(old.get('status', options[0])), key=scoped_state(st).widget_key(key + '_outcome'))
+            remaining = st.text_input('Specific unfinished aspect (optional)', value=old.get('remaining', ''), max_chars=1000, key=scoped_state(st).widget_key(key + '_remaining'))
+            confirm = st.checkbox('Whole item completed — explicitly confirm', value=old.get('confirmed_complete', False), key=scoped_state(st).widget_key(key + '_complete'))
             if chosen != options[0]:
                 updates.append(dict(item_id=item['id'], status=chosen, remaining=remaining, evidence=lesson.get('note', ''), confirmed_complete=confirm))
             elif remaining:

@@ -1,0 +1,109 @@
+{
+  "before": {
+    "teacher_profile": {
+      "count": 1,
+      "sha256": "4be44e1e653474fee8d006d23aec7b7abcfe675e60919a3f6f6b1f572c2ff11a"
+    },
+    "planning_setup": {
+      "count": 1,
+      "sha256": "e1559c63637b423cbebaf951c51a67a701ea83b13f45bc732f6f0e947132d957"
+    },
+    "current_learning_position": {
+      "count": 1,
+      "sha256": "45410b258b9575370a6c733a616595a1023edf797d968ebdd9818fda75542c32"
+    },
+    "actual_progress": {
+      "count": 1,
+      "sha256": "6f3c5dca376243845aa40d4b6633f60327b4fc86bd1c6df2f2e519cc9ca2c752"
+    },
+    "lesson_progress": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "day_plans": {
+      "count": 2,
+      "sha256": "8d72a853cbfe8ed3dfb75f9b60f0c00c247d0afcc3300ae53ad159c114d54f19"
+    },
+    "monthly_plans": {
+      "count": 2,
+      "sha256": "85796aad7ff552719f297e2624b8a8c6d5ba70026798caad49b3adccf8e51a93"
+    },
+    "monthly_learning_items": {
+      "count": 349,
+      "sha256": "bf5703c7f5358dfc14457e38cee0d19e896ac50cebe3d874fae7a931994452aa"
+    },
+    "monthly_item_updates": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "period_reviews": {
+      "count": 1,
+      "sha256": "61f2a9173208fa39b456b12255c4537da77eb7f0aff86c8ea635e8d0a5607234"
+    },
+    "carryover_items": {
+      "count": 2,
+      "sha256": "9e32d1d181fbaa6834bc7e1a2a9b37f0c7f72484996d6d2d070dfb9465721486"
+    },
+    "lesson_resources": {
+      "count": 7,
+      "sha256": "376e44458b4567d2e41e759f75e0186f92239276d692d19012666221a6cd0e15"
+    }
+  },
+  "after": {
+    "teacher_profile": {
+      "count": 1,
+      "sha256": "4be44e1e653474fee8d006d23aec7b7abcfe675e60919a3f6f6b1f572c2ff11a"
+    },
+    "planning_setup": {
+      "count": 1,
+      "sha256": "e1559c63637b423cbebaf951c51a67a701ea83b13f45bc732f6f0e947132d957"
+    },
+    "current_learning_position": {
+      "count": 1,
+      "sha256": "45410b258b9575370a6c733a616595a1023edf797d968ebdd9818fda75542c32"
+    },
+    "actual_progress": {
+      "count": 1,
+      "sha256": "6f3c5dca376243845aa40d4b6633f60327b4fc86bd1c6df2f2e519cc9ca2c752"
+    },
+    "lesson_progress": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "day_plans": {
+      "count": 2,
+      "sha256": "8d72a853cbfe8ed3dfb75f9b60f0c00c247d0afcc3300ae53ad159c114d54f19"
+    },
+    "monthly_plans": {
+      "count": 2,
+      "sha256": "85796aad7ff552719f297e2624b8a8c6d5ba70026798caad49b3adccf8e51a93"
+    },
+    "monthly_learning_items": {
+      "count": 349,
+      "sha256": "bf5703c7f5358dfc14457e38cee0d19e896ac50cebe3d874fae7a931994452aa"
+    },
+    "monthly_item_updates": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "period_reviews": {
+      "count": 1,
+      "sha256": "61f2a9173208fa39b456b12255c4537da77eb7f0aff86c8ea635e8d0a5607234"
+    },
+    "carryover_items": {
+      "count": 2,
+      "sha256": "9e32d1d181fbaa6834bc7e1a2a9b37f0c7f72484996d6d2d070dfb9465721486"
+    },
+    "lesson_resources": {
+      "count": 7,
+      "sha256": "376e44458b4567d2e41e759f75e0186f92239276d692d19012666221a6cd0e15"
+    }
+  },
+  "unchanged": true,
+  "backup_payload_checksum": "ab273d25a2727a816ce16cacf072f2cdab48b10dceb480a9ad49ad835c50318f",
+  "migrated_payload_checksum": "ab273d25a2727a816ce16cacf072f2cdab48b10dceb480a9ad49ad835c50318f",
+  "complete_export_equivalent": true,
+  "production_migrated": false,
+  "environment": "Isolated PostgreSQL 16.15 seeded from fresh production format-6 export",
+  "backup_file_sha256": "7e5bbc694058d696b472c4b6cb621539dfada4641ddd19d98c3fb94e7d648d7c"
+}
