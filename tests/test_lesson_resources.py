@@ -29,7 +29,7 @@ class ResourceTests(unittest.TestCase):
   self.assertEqual(CHECK['schema']['properties']['checks']['items']['properties']['type']['enum'],list(TYPES))
   c=client(); generate(context(),['whiteboard'],'','',True,c)
   prompt=c.responses.create.call_args_list[1].kwargs['input']
-  self.assertIn('findings=[]',prompt);self.assertIn('Do not generate or rewrite resources',prompt)
+  self.assertIn('MUST include the literal string lesson',prompt);self.assertIn('findings=[]',prompt);self.assertIn('Do not generate or rewrite resources',prompt)
  def test_no_source_comprehension_zero_calls(self):
   c=client()
   with self.assertRaises(ResourceFailure): generate(context(),['comprehension'],'','Reading Zone',True,c)
