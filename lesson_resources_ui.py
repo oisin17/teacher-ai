@@ -2,13 +2,13 @@
 import copy
 import importlib
 import lesson_resources
-if lesson_resources.VERSION != 2:
+if lesson_resources.VERSION != 3:
  importlib.reload(lesson_resources)
 import streamlit as st
 from lesson_resources import TYPES, suggestions, generate, review, digest, checked_digest, ResourceFailure
 from persistence import StorageError
 
-MODULE_VERSION = 3
+MODULE_VERSION = 4
 
 
 def _message(error):

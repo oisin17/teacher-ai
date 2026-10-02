@@ -3,7 +3,7 @@ import json
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
-from lesson_resources import FORMAT, TYPES, suggestions, generate, review, digest, checked_digest, ResourceFailure, validate_saved
+from lesson_resources import CHECK, FORMAT, TYPES, suggestions, generate, review, digest, checked_digest, ResourceFailure, validate_saved
 
 
 def context():
@@ -25,6 +25,11 @@ class ResourceTests(unittest.TestCase):
  def test_evidence_schema_constrains_categories(self):
   refs=FORMAT['schema']['properties']['resources']['items']['properties']['evidence_ids']['items']['enum']
   self.assertEqual(refs,['lesson','profile','learning','carryover','current','source'])
+ def test_review_contract_uses_exact_type_ids_and_empty_pass_findings(self):
+  self.assertEqual(CHECK['schema']['properties']['checks']['items']['properties']['type']['enum'],list(TYPES))
+  c=client(); generate(context(),['whiteboard'],'','',True,c)
+  prompt=c.responses.create.call_args_list[1].kwargs['input']
+  self.assertIn('findings=[]',prompt);self.assertIn('Do not generate or rewrite resources',prompt)
  def test_no_source_comprehension_zero_calls(self):
   c=client()
   with self.assertRaises(ResourceFailure): generate(context(),['comprehension'],'','Reading Zone',True,c)
