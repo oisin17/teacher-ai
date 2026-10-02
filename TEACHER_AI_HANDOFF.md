@@ -1526,3 +1526,6 @@ lock; ordinary workspace locks remain independent. RLS settings trust the server
 identity boundary; future OIDC must supply verified internal identity/membership.
 Checksum is not signed backup provenance. Historical snapshots remain embedded;
 immutable version registry, manual-event timezone and optimistic-edit debt remain.
+
+
+Publication verification — 2 October 2026: implementation commit `0157bd0d975e33342ddf666c3f7864bff1f0f6a9` is published in draft PR #8 (https://github.com/oisin17/teacher-ai/pull/8). GitHub Actions run 37007381622 completed successfully, including baseline regression tests, real PostgreSQL persistence, and the PostgreSQL 16 restricted-role/RLS adversarial stage. Local combined suite: 252 tests passed without skips; 147 distinct PostgreSQL cases (63 legacy and 84 restricted-role scoped cases). Production cutover has not occurred: authenticated administration and a fresh verified database snapshot/restore remain required. Main/live deployment stays at d8c4cb6. Earlier “CI pending” references describe the pre-publication checkpoint.
