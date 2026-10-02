@@ -255,7 +255,10 @@ Provider choice and app registration are pending. No paid service selected.
 | Dependencies | Streamlit pinned; OpenAI/PDF/DOCX floating, psycopg range | Lock tested versions, update intentionally with CI; source fingerprint alone is not a dependency lock |
 
 No credentials or production records were inspected by shell. Presence/handling
-was assessed from code; deployment access permissions and account-level provider
+was assessed from code; the tracked-file inventory contains no database, backup
+or secrets file, .gitignore excludes Streamlit secrets and SQLite files, and the
+available Git-history filename scan found no such tracked data files. This is
+not a complete credential-content scan or certification of all remote history; deployment access permissions and account-level provider
 settings cannot be certified from this review. Model review is not a security
 boundary or proof of correctness. Generated Markdown does not enable unsafe HTML;
 links can still be misleading, and unsupported claims can evade semantic review.
@@ -284,6 +287,12 @@ concurrent plan generation/replacement, SQL timeout/network/commit uncertainty,
 malicious/oversized uploads, bounded SDK retry/timeout behavior and a fresh-process
 deployment smoke test. Hot reload is managed by manually synchronized module
 versions; diagnostics identify code but cannot guarantee every module hot-reloaded.
+Manual event timestamps in set_carryover_state, save_learning_items merge events
+and correct_learning_item use host date.today(), while the planning picker uses
+Europe/Dublin. They can disagree around midnight/daylight-saving boundaries.
+Before beta, use one workspace-timezone clock for manual events and test both
+UTC/Dublin boundaries; do not retroactively rewrite genuine event dates.
+
 A process restart remains safer for code/dependency rollouts than adding more
 manual importlib reload paths. No guaranteed reconnect/draft-resume contract.
 
@@ -377,7 +386,7 @@ Concise categories:
   stateless response-storage default and 13 valuable regression tests.
 - **Issues found:** database latency/round trips, global shared ownership, missing
   tenant authorization, oversized-upload risk, unnecessary prompt data, floating
-  dependencies, last-write-wins edits and fragile hot reload/draft sessions.
+  dependencies, last-write-wins edits, inconsistent manual-event timezone and fragile hot reload/draft sessions.
 - **Recommended before multi-user beta:** workspace migration/scoped Store/RLS,
   two-tenant tests, invite identity gates, scoped backups, privacy/input/budget
   controls and cold-deployment/concurrency checks.

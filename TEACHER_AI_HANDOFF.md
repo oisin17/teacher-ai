@@ -1458,3 +1458,11 @@ Owner decisions: provider/invites and rights, pupil-data/retention policy, backu
 cloning semantics, durable-draft recovery and whether to proceed with the measured
 bounded connection-pool proposal. No pool, cross-request cache, new service or
 durable drafts added. Larger performance changes require a reviewed proposal.
+
+Additional beta debt: manual learning/carryover events use host date.today(),
+whereas the planning picker uses Europe/Dublin. Introduce a workspace clock with
+midnight/DST tests before beta; do not rewrite genuine historical dates. Profile
+and some progress edits still have last-write-wins behavior despite serialized
+transactions; add optimistic revision checks with conflict UX/tests. Current
+tracked inventory has no database/backup/secrets file; ignores cover secrets and
+SQLite files. This review does not certify full historical credential scanning.
