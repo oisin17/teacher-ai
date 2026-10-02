@@ -569,6 +569,8 @@ class AppTests(unittest.TestCase):
         self.assertEqual(len(app.exception),0)
         # Maths, English, Gaeilge: one generation and review each.
         self.assertEqual(self.client.responses.create.call_count,6)
+        metrics=app.session_state['tomorrow_'+plan['plan_id']+'_result']
+        self.assertGreaterEqual(metrics['end_to_end_seconds'],metrics['action_elapsed_seconds'])
         self.assertEqual(self.store.export_backup(),before)
         widget=next(w for w in app.text_area if w.label=='Classroom content')
         widget.set_value('On mini-whiteboards: 14 ÷ 2.').run()

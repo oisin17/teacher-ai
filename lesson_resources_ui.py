@@ -8,7 +8,7 @@ import streamlit as st
 from lesson_resources import TYPES, suggestions, generate, regenerate_resource, review, digest, checked_digest, ResourceFailure
 from persistence import StorageError
 
-MODULE_VERSION = 7
+MODULE_VERSION = 8
 
 
 def _message(error):
@@ -26,6 +26,11 @@ def _remember_tomorrow(key):
 def _tomorrow_input(function, label, key, default, **kwargs):
  st.session_state.setdefault(key,st.session_state.setdefault('tomorrow_inputs',{}).get(key,default))
  return function(label,key=key,on_change=_remember_tomorrow,args=(key,),**kwargs)
+
+
+def _mark_tomorrow_start(prefix):
+ from time import perf_counter
+ st.session_state[prefix+'_started']=perf_counter()
 
 
 def editor(store, client, resource, pending_key, view='lesson'):
@@ -201,7 +206,8 @@ def tomorrow_panel(store, client, after):
        st.caption('Evidence changed — '+resource['title']);st.code(resource['body'],language=None)
       elif resource['id'] not in st.session_state[pending_key]:
        editor(store,client,resource,pending_key,view='tomorrow_saved')
-  if st.button('Generate tomorrow resources',key=prefix+'_generate',disabled=not requests):
+  submitted=st.button('Generate tomorrow resources',key=prefix+'_generate',disabled=not requests,on_click=_mark_tomorrow_start,args=(prefix,))
+  if submitted:
    start=perf_counter()
    progress=st.empty()
    def keep(resources):
@@ -232,3 +238,7 @@ def tomorrow_panel(store, client, after):
     except (StorageError,ResourceFailure) as error: _message(error)
    if prefix+'_probe_result' in st.session_state:
     st.json(st.session_state[prefix+'_probe_result'])
+  if result:
+   if submitted: result['end_to_end_seconds']=round(perf_counter()-st.session_state[prefix+'_started'],2)
+   if 'end_to_end_seconds' in result:
+    st.caption(f"Total preparation time: {result['end_to_end_seconds']}s from Generate to completed result rendering, including app/database work; browser network/paint excluded.")
