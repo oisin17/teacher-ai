@@ -2,13 +2,16 @@
 import copy
 import importlib
 import lesson_resources
-if lesson_resources.VERSION != 6:
+if lesson_resources.VERSION != 7:
  importlib.reload(lesson_resources)
 import streamlit as st
 from lesson_resources import TYPES, suggestions, generate, regenerate_resource, review, digest, checked_digest, ResourceFailure
 from persistence import StorageError
+import resources_tomorrow
+if resources_tomorrow.VERSION != 2:
+ importlib.reload(resources_tomorrow)
 
-MODULE_VERSION = 8
+MODULE_VERSION = 9
 
 
 def _message(error):

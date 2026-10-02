@@ -79,3 +79,15 @@ class ResourceTests(unittest.TestCase):
   c=Mock();c.responses.create.return_value=SimpleNamespace(output_text='bad')
   with self.assertRaises(ResourceFailure): generate(context(),['whiteboard'],'','',True,c)
   self.assertEqual(c.responses.create.call_count,1)
+
+ def test_verified_calendar_supplied_without_mutating_lesson_context(self):
+  from lesson_resources import calendar_labels
+  context_value=context();context_value['planning_date']='2026-10-02'
+  context_value['recent_progress']=[{'planning_date':'2026-09-30'}]
+  before=copy.deepcopy(context_value);c=client()
+  generate(context_value,['whiteboard'],'','',True,c)
+  self.assertEqual(calendar_labels(context_value),{'2026-09-30':'Wednesday','2026-10-02':'Friday'})
+  for call in c.responses.create.call_args_list:
+   packet=json.loads(call.kwargs['input'].rsplit('\n',1)[-1])
+   self.assertEqual(packet['verified_calendar']['2026-10-02'],'Friday')
+  self.assertEqual(context_value,before)

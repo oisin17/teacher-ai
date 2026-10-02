@@ -6,7 +6,7 @@ from time import perf_counter
 from lesson_resources import suggestions, source_available, digest, generate, regenerate_resource, ResourceFailure
 from persistence import StorageError
 
-VERSION = 1
+VERSION = 2
 
 
 class _Meter:
@@ -144,7 +144,7 @@ def probe_mixed_review(store, client, plan):
         context = store.resource_context(plan['planning_date'], plan['plan_id'], lesson['lesson_id'])
         exact = [r for r in before if r['plan_id'] == plan['plan_id'] and r['lesson_id'] == lesson['lesson_id'] and r['context_digest'] == digest(context)]
         whiteboard = next((r for r in exact if r['type'] == 'whiteboard'), None)
-        sibling = next((r for r in exact if r['type'] != 'whiteboard' and not r['source_text']), None)
+        sibling = next((r for r in exact if r['type'] == 'differentiated' and not r['source_text']), None) or next((r for r in exact if r['type'] != 'whiteboard' and not r['source_text']), None)
         if whiteboard and sibling:
             bad = copy.deepcopy(whiteboard)
             bad.update(body='Calculate 12 ÷ 2 on your mini-whiteboard.', guidance='The answer is 99.')
