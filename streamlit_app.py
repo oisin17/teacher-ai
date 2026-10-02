@@ -1,3 +1,4 @@
+from workspace_scope import scoped_state
 import streamlit as st
 from openai import OpenAI
 import io
@@ -5,15 +6,15 @@ import copy
 import hashlib
 from time import perf_counter
 from app_diagnostics import start_trace, TimedAI, build_identity, runtime_versions
-_run_trace = start_trace(st.session_state.pop("performance_action_trace", None))
+
 from uuid import uuid4
 from monthly_plans import suggest_dates
 import importlib
 import monthly_learning
-if getattr(monthly_learning, "LEARNING_VERSION", None) != 3:
+if getattr(monthly_learning, "LEARNING_VERSION", None) != 4:
     importlib.reload(monthly_learning)
 import monthly_learning_ui
-if getattr(monthly_learning_ui, "MODULE_VERSION", None) != 7:
+if getattr(monthly_learning_ui, "MODULE_VERSION", None) != 8:
     importlib.reload(monthly_learning_ui)
 from monthly_learning_ui import review_items, item_inputs, suggest_outcomes
 from monthly_learning import MARKER, fingerprint, planning_allowed, display_wording
@@ -35,15 +36,15 @@ if refresh_lessons:
 import persistence
 # Streamlit hot reload can retain the previous imported storage module.
 # Reload only when that cached module lacks this rollout's additive API.
-if refresh_lessons or getattr(persistence, "PERSISTENCE_VERSION", None) != 14:
+if refresh_lessons or getattr(persistence, "PERSISTENCE_VERSION", None) != 15:
     importlib.reload(persistence)
-from persistence import Store, StorageError
+from persistence import Store, StorageError, WorkspaceAccessError
 import planning_quality
 if getattr(planning_quality, "QUALITY_MODULE_VERSION", None) != 18:
     importlib.reload(planning_quality)
 from planning_quality import quality_gate, QualityFailure, protected_blocks
 import lesson_resources_ui
-if getattr(lesson_resources_ui, 'MODULE_VERSION', None) != 10:
+if getattr(lesson_resources_ui, 'MODULE_VERSION', None) != 11:
     importlib.reload(lesson_resources_ui)
 import json
 from datetime import date, timedelta
@@ -52,32 +53,34 @@ from lesson_progress import (
     parse_generated_plan, plan_markdown,
 )
 
-client = TimedAI(OpenAI(api_key=st.secrets["OPENAI_API_KEY"]))
 
 def storage_call(operation, *args):
     try:
         return operation(*args)
     except StorageError as error:
+        if isinstance(error, WorkspaceAccessError):
+            st.session_state.clear()
         st.error(str(error))
         st.stop()
 
 
-# No local fallback: production saves must go to the durable database.
+# Explicit owner-only bridge. No OIDC/email matching/default workspace.
+from workspace_scope import WorkspaceScope, bind_session_scope
 try:
-    store = Store(st.secrets.get("DATABASE_URL", ""))
+    if st.secrets.get('ACCESS_MODE') != 'legacy_owner':
+        raise StorageError('Owner access must be configured before this deployment can run.')
+    if st.secrets.get('LEGACY_OWNER_ACCESS_RESTRICTED') is not True:
+        raise StorageError('Verify owner-only hosting access before enabling the legacy owner deployment.')
+    scope = WorkspaceScope(st.secrets.get('LEGACY_OWNER_USER_ID'), st.secrets.get('LEGACY_WORKSPACE_ID'))
+    bind_session_scope(st.session_state, scope)
+    store = Store(st.secrets.get('DATABASE_URL', ''), scope)
 except StorageError as error:
+    st.session_state.clear()
     st.error(str(error))
     st.stop()
-
-
-@st.cache_resource
-def initialise_storage(database_url, schema_version):
-    # A code hot reload can preserve Streamlit's resource cache. Bump this
-    # explicit key whenever additive tables/schema must be initialized.
-    Store(database_url).initialise()
-
-
-storage_call(initialise_storage, st.secrets.get("DATABASE_URL", ""), persistence.PERSISTENCE_VERSION)
+_run_trace = start_trace(scoped_state(st).pop('performance_action_trace', None))
+storage_call(store.verify_schema)
+client = TimedAI(OpenAI(api_key=st.secrets["OPENAI_API_KEY"]))
 
 
 def save_teacher_profile(profile):
@@ -111,9 +114,9 @@ def load_progress_history():
 def rebuild_current_learning_from_history():
     history = load_progress_history()
     if not history:
-        return st.session_state.get("current_learning_position", {})
+        return scoped_state(st).get("current_learning_position", {})
 
-    existing_position = st.session_state.get("current_learning_position", {})
+    existing_position = scoped_state(st).get("current_learning_position", {})
     response = client.responses.create(
         model="gpt-5.4-mini",
         input=(
@@ -138,7 +141,7 @@ def rebuild_current_learning_from_history():
     if not all(key in rebuilt and isinstance(rebuilt[key], str) for key in required_keys):
         raise ValueError("Invalid rebuilt Current Learning Position")
     save_current_learning_position(rebuilt)
-    st.session_state["current_learning_position"] = rebuilt
+    scoped_state(st)["current_learning_position"] = rebuilt
     return rebuilt
 
 def load_recent_progress(limit=10):
@@ -149,9 +152,9 @@ def lesson_progress_inputs(lessons, prefix):
     """One quick row per real lesson; unset is not a teaching outcome."""
     def mark_all_completed():
         for lesson in lessons:
-            st.session_state[f"{prefix}_{lesson['lesson_id']}_status"] = "Completed"
+            scoped_state(st)[f"{prefix}_{lesson['lesson_id']}_status"] = "Completed"
     outcomes = []
-    if prefix + '_reviewed_notes' in st.session_state:
+    if prefix + '_reviewed_notes' in scoped_state(st):
         st.info('Review suggested item outcomes below. Nothing has been saved; Save accepts them. Whole-item completion needs explicit confirmation.')
     learning_items = {i["id"]: i for i in storage_call(store.list_learning_items)}
     carry_labels = {i["id"]: i["learning"] for i in storage_call(store.list_carryover)}
@@ -162,8 +165,8 @@ def lesson_progress_inputs(lessons, prefix):
         for lesson in lessons:
             status_key = f"{prefix}_{lesson['lesson_id']}_status"
             note_key = f"{prefix}_{lesson['lesson_id']}_note"
-            st.session_state.setdefault(status_key, lesson.get("status"))
-            st.session_state.setdefault(note_key, lesson.get("note", ""))
+            scoped_state(st).setdefault(status_key, lesson.get("status"))
+            scoped_state(st).setdefault(note_key, lesson.get("note", ""))
             title, status_column, note_column = st.columns([2, 3, 2])
             with title:
                 st.markdown(f"**{lesson['subject']} — {lesson['topic']}**")
@@ -171,25 +174,25 @@ def lesson_progress_inputs(lessons, prefix):
             with status_column:
                 status = st.radio(
                     f"{lesson['subject']} — {lesson['topic']} progress",
-                    STATUSES, index=None, horizontal=True, key=status_key,
+                    STATUSES, index=None, horizontal=True, key=scoped_state(st).widget_key(status_key),
                     label_visibility="collapsed",
                 )
             with note_column:
                 note = st.text_input(
                     f"{lesson['subject']} — {lesson['topic']} note (optional)",
                     placeholder="Short note (optional)", max_chars=300,
-                    key=note_key, label_visibility="collapsed",
+                    key=scoped_state(st).widget_key(note_key), label_visibility="collapsed",
                 )
             completed_ids = []
             for carry_id in lesson.get("carryover_ids", []):
                 if st.checkbox(f"This carryover is now finished: {carry_labels.get(carry_id, carry_id)}",
                                value=carry_id in lesson.get("completed_carryover_ids", []),
-                               key=f"{prefix}_{lesson['lesson_id']}_carry_{carry_id}"):
+                               key=scoped_state(st).widget_key(f"{prefix}_{lesson['lesson_id']}_carry_{carry_id}")):
                     completed_ids.append(carry_id)
             outcome = {**lesson, "status": status, "note": note.strip()}
             if lesson.get("carryover_ids"):
                 outcome["completed_carryover_ids"] = completed_ids
-            draft = st.session_state.get(prefix + '_item_suggestions', {}).get(lesson['lesson_id'])
+            draft = scoped_state(st).get(prefix + '_item_suggestions', {}).get(lesson['lesson_id'])
             if draft is not None:
                 outcome['item_updates'] = draft
             outcome["item_updates"] = item_inputs(outcome, prefix, learning_items)
@@ -200,18 +203,18 @@ def lesson_progress_inputs(lessons, prefix):
             type="primary",
         )
     review_hash = hashlib.sha256(json.dumps([(l['lesson_id'], l['status'], l['note']) for l in outcomes]).encode()).hexdigest()
-    mixed_review = submitted and any(l['status'] == 'Partially completed' and l['note'] and len(l.get('monthly_item_links', [])) > 1 and not l.get('item_updates') for l in outcomes) and st.session_state.get(prefix + '_reviewed_notes') != review_hash
+    mixed_review = submitted and any(l['status'] == 'Partially completed' and l['note'] and len(l.get('monthly_item_links', [])) > 1 and not l.get('item_updates') for l in outcomes) and scoped_state(st).get(prefix + '_reviewed_notes') != review_hash
     if suggest or mixed_review:
         try:
             with st.spinner('Suggesting item outcomes — nothing is saved…'):
                 suggestions = suggest_outcomes(client, outcomes, learning_items)
-            st.session_state[prefix + '_item_suggestions'] = suggestions
-            st.session_state[prefix + '_reviewed_notes'] = review_hash
+            scoped_state(st)[prefix + '_item_suggestions'] = suggestions
+            scoped_state(st)[prefix + '_reviewed_notes'] = review_hash
             for lesson in outcomes:
                 for update in suggestions.get(lesson['lesson_id'], []):
                     base = prefix + lesson['lesson_id'] + update['item_id']
                     # Widget updates on the next rerun, after this form has submitted.
-                    st.session_state[base + '_pending'] = update
+                    scoped_state(st)[base + '_pending'] = update
             st.rerun()
         except Exception:
             st.warning('Suggestions could not be verified. Save conservative progress or enter item exceptions yourself.')
@@ -226,7 +229,7 @@ def transition_review(monthly, selected_date):
         st.write(f"Moving into {monthly['title']} — anything to carry over?")
         st.caption("Review suggestions, uncheck incorrect items, or add your own. They are not saved until you confirm.")
         draft_key = f"carry_suggestions_{monthly['id']}_{selected_date}"
-        if draft_key not in st.session_state:
+        if draft_key not in scoped_state(st):
             try:
                 response = client.responses.create(model="gpt-5.4-mini", text={"format": SUGGESTION_FORMAT}, input=(
                     "Suggest at most 6 specific unfinished or not-taught learning items from the prior period's actual progress and Current Learning below. "
@@ -238,20 +241,20 @@ def transition_review(monthly, selected_date):
                 if not isinstance(suggested, list) or len(suggested) > 6 or any(
                     not isinstance(i, dict) or any(not isinstance(i.get(k), str) for k in ("subject", "learning", "evidence")) for i in suggested):
                     raise ValueError("Invalid suggestions")
-                st.session_state[draft_key] = suggested
+                scoped_state(st)[draft_key] = suggested
             except Exception:
-                st.session_state[draft_key] = []
+                scoped_state(st)[draft_key] = []
                 st.warning("Suggestions could not be loaded. You can add carryover manually or choose Nothing to carry over.")
         chosen = []
         with st.form(f"carry_review_{monthly['id']}"):
-            for index, suggestion in enumerate(st.session_state[draft_key]):
-                keep = st.checkbox(f"Carry over {suggestion['subject']}", value=True, key=f"{draft_key}_{index}_keep")
-                learning = st.text_input(f"{suggestion['subject']} unfinished learning", value=suggestion['learning'][:300], max_chars=300, key=f"{draft_key}_{index}_text")
+            for index, suggestion in enumerate(scoped_state(st)[draft_key]):
+                keep = st.checkbox(f"Carry over {suggestion['subject']}", value=True, key=scoped_state(st).widget_key(f"{draft_key}_{index}_keep"))
+                learning = st.text_input(f"{suggestion['subject']} unfinished learning", value=suggestion['learning'][:300], max_chars=300, key=scoped_state(st).widget_key(f"{draft_key}_{index}_text"))
                 st.caption(suggestion["evidence"][:1500])
                 if keep:
                     chosen.append({"subject": suggestion["subject"], "learning": learning, "evidence": suggestion["evidence"][:1500]})
             for learning_item in context.get('unfinished_items', []):
-                if st.checkbox(f"Carry over Monthly item: {learning_item['subject']} — {learning_item['remaining'] or learning_item['description']}", value=False, key=draft_key + learning_item['id']):
+                if st.checkbox(f"Carry over Monthly item: {learning_item['subject']} — {learning_item['remaining'] or learning_item['description']}", value=False, key=scoped_state(st).widget_key(draft_key + learning_item['id'])):
                     chosen.append(dict(subject=learning_item['subject'], learning=(learning_item['remaining'] or learning_item['description'])[:300], evidence=learning_item['evidence'] or 'Teacher confirmed unfinished Monthly Plan item', monthly_item_id=learning_item['id']))
             subject = st.selectbox("Add another item — subject", ["Maths", "English", "Gaeilge", "SESE", "Other"])
             learning = st.text_area("Another carryover item (optional)", max_chars=900, help="One item per line; keep each under 300 characters.")
@@ -285,32 +288,32 @@ def carryover_controls(items):
                     available = [i for i in storage_call(store.list_learning_items) if not i['archived']]
                 if available:
                     with st.expander('Link to a Monthly Plan item (optional)'):
-                        target = st.selectbox('Same underlying learning item', [i['id'] for i in available], format_func=lambda id: next(i['subject'] + ' — ' + i['description'] for i in available if i['id'] == id), key='carry_link_' + item['id'])
-                        if st.button('Confirm same learning', key='carry_link_save_' + item['id']):
+                        target = st.selectbox('Same underlying learning item', [i['id'] for i in available], format_func=lambda id: next(i['subject'] + ' — ' + i['description'] for i in available if i['id'] == id), key=scoped_state(st).widget_key('carry_link_' + item['id']))
+                        if st.button('Confirm same learning', key=scoped_state(st).widget_key('carry_link_save_' + item['id'])):
                             storage_call(store.link_carryover_item, item['id'], target)
                             st.rerun()
             if item["state"] == "outstanding":
-                completed = st.button("Mark complete", key=f"complete_{item['id']}")
-                removed = st.button("Remove", key=f"remove_{item['id']}")
+                completed = st.button("Mark complete", key=scoped_state(st).widget_key(f"complete_{item['id']}"))
+                removed = st.button("Remove", key=scoped_state(st).widget_key(f"remove_{item['id']}"))
                 if completed or removed:
                     storage_call(store.set_carryover_state, item["id"], "completed" if completed else "removed")
                     st.rerun()
             elif item["state"] == "completed" and item.get("completion_source") != "lesson":
-                if st.button("Reopen item", key=f"reopen_{item['id']}"):
+                if st.button("Reopen item", key=scoped_state(st).widget_key(f"reopen_{item['id']}")):
                     storage_call(store.set_carryover_state, item["id"], "outstanding")
                     st.rerun()
             elif item["state"] == "removed":
-                if st.button("Restore item", key=f"restore_{item['id']}"):
+                if st.button("Restore item", key=scoped_state(st).widget_key(f"restore_{item['id']}")):
                     storage_call(store.set_carryover_state, item["id"], "outstanding")
                     st.rerun()
 
 
-if "teacher_profile" not in st.session_state:
-    st.session_state["teacher_profile"] = load_teacher_profile()
-if "planning_setup" not in st.session_state:
-    st.session_state["planning_setup"] = load_planning_setup()
-if "current_learning_position" not in st.session_state:
-    st.session_state["current_learning_position"] = load_current_learning_position()
+if "teacher_profile" not in scoped_state(st):
+    scoped_state(st)["teacher_profile"] = load_teacher_profile()
+if "planning_setup" not in scoped_state(st):
+    scoped_state(st)["planning_setup"] = load_planning_setup()
+if "current_learning_position" not in scoped_state(st):
+    scoped_state(st)["current_learning_position"] = load_current_learning_position()
     
 def extract_text_from_file(uploaded_file):
     if uploaded_file is None:
@@ -396,7 +399,7 @@ st.divider()
 if page == "Today":
 
     st.header("Today's Plan")
-    if st.session_state.pop("lesson_progress_saved", False):
+    if scoped_state(st).pop("lesson_progress_saved", False):
         st.success("Lesson progress saved and Current Learning Position updated.")
     st.write(
         "Your teaching day will appear here based on your timetable, "
@@ -405,18 +408,18 @@ if page == "Today":
     # Keep the selected planning date stable across Streamlit widget reruns.
     # Without an explicit session-state key, interactions elsewhere on this
     # page (such as the progress radio) can rebuild the date input from today.
-    if "planning_date" not in st.session_state:
+    if "planning_date" not in scoped_state(st):
         from datetime import datetime
         from zoneinfo import ZoneInfo
-        st.session_state["planning_date"] = st.session_state.get('planning_date_value', datetime.now(ZoneInfo('Europe/Dublin')).date())
+        scoped_state(st)["planning_date"] = scoped_state(st).get('planning_date_value', datetime.now(ZoneInfo('Europe/Dublin')).date())
 
     planning_date = st.date_input(
         "Which school date are you planning?",
-        key="planning_date",
+        key=scoped_state(st).widget_key("planning_date"),
         format="DD/MM/YYYY"
     )
     planning_day = planning_date.strftime("%A")
-    st.session_state['planning_date_value'] = planning_date
+    scoped_state(st)['planning_date_value'] = planning_date
     st.caption(f"Planning for **{planning_day}, {planning_date.strftime('%d %B %Y')}**")
 
     if planning_day in ["Saturday", "Sunday"]:
@@ -440,7 +443,7 @@ if page == "Today":
     if st.button("✨ Generate Today's Plan", type="primary", disabled=day_state["progress"] is not None or selected_monthly is None or needs_review):
 
         teacher_profile = load_teacher_profile()
-        st.session_state["teacher_profile"] = teacher_profile
+        scoped_state(st)["teacher_profile"] = teacher_profile
         planning_setup = storage_call(store.load_document, "planning_setup")
 
         timetable_text = planning_setup.get("timetable_text", "")
@@ -472,7 +475,7 @@ if page == "Today":
                     held_items = [display_wording(i) for i in learning_items if i["monthly_plan_id"] == selected_monthly["id"] and not i["archived"] and i.get("requires_clarification")]
                     recent_progress = quality_context['recent_progress']
                     current_learning_position = quality_context['current_learning_position']
-                    st.session_state["current_learning_position"] = current_learning_position
+                    scoped_state(st)["current_learning_position"] = current_learning_position
 
                     generation_format = copy.deepcopy(PLAN_FORMAT)
                     if generation_items:
@@ -614,19 +617,19 @@ if page == "Today":
                     generated_plan = quality_gate(generated_plan, quality_context, client, generation_format)
                     generated_plan["planning_quality"]["generation_seconds"] = generation_seconds
                     store.save_day_plan(generated_plan)
-                    st.session_state.pop("last_planning_check", None)
+                    scoped_state(st).pop("last_planning_check", None)
                     day_state = {"plan": generated_plan, "progress": None}
-                    st.session_state["todays_plan"] = plan_markdown(generated_plan)
-                    st.session_state["todays_plan_date"] = planning_date.isoformat()
-                    st.session_state["todays_plan_day"] = planning_day
+                    scoped_state(st)["todays_plan"] = plan_markdown(generated_plan)
+                    scoped_state(st)["todays_plan_date"] = planning_date.isoformat()
+                    scoped_state(st)["todays_plan_day"] = planning_day
 
                 except QualityFailure as error:
-                    st.session_state['last_planning_check'] = {'date': planning_date.isoformat(), **error.report}
+                    scoped_state(st)['last_planning_check'] = {'date': planning_date.isoformat(), **error.report}
                     st.error(str(error))
                 except Exception:
                     st.error("Teacher AI could not generate a complete lesson plan. Your previous saved plan is unchanged. Please try again.")
 
-    failed_check = st.session_state.get('last_planning_check')
+    failed_check = scoped_state(st).get('last_planning_check')
     if failed_check and failed_check['date'] == planning_date.isoformat():
         with st.expander('Planning checks — latest attempt'):
             st.caption(failed_check['state'])
@@ -649,7 +652,7 @@ if page == "Today":
             st.caption("This saved day plan predates dated Monthly Plans; its original monthly source was not recorded.")
         st.caption(f"Generated for **{planning_day}, {planning_date.strftime('%d/%m/%Y')}**")
         from lesson_resources_ui import lesson_panel, historical_panel
-        if st.session_state.pop('resource_notice', None):
+        if scoped_state(st).pop('resource_notice', None):
             st.success('Resource saved. Classroom progress unchanged.')
         saved_resources = storage_call(store.list_resources, planning_date.isoformat())
         st.markdown(saved_plan['overview'])
@@ -683,8 +686,8 @@ if page == "Today":
                 else:
                     position = storage_call(store.save_lesson_progress, planning_date.isoformat(),
                                             saved_plan["plan_id"], outcomes)
-                    st.session_state["current_learning_position"] = position
-                    st.session_state["lesson_progress_saved"] = True
+                    scoped_state(st)["current_learning_position"] = position
+                    scoped_state(st)["lesson_progress_saved"] = True
                     st.rerun()
     elif day_state["progress"]:
         st.info("This date has a historical whole-day record. Review or correct it in Progress History.")
@@ -722,7 +725,7 @@ elif page == "Progress History":
             "School date",
             value=date.fromisoformat(selected["planning_date"]),
             format="DD/MM/YYYY",
-            key=f"history_date_{selected['id']}"
+            key=scoped_state(st).widget_key(f"history_date_{selected['id']}")
         )
         edited_day = edited_date.strftime("%A")
 
@@ -736,7 +739,7 @@ elif page == "Progress History":
                 if position is None:
                     st.error("Another progress record already exists for that date. Choose the existing date instead.")
                 else:
-                    st.session_state["current_learning_position"] = position
+                    scoped_state(st)["current_learning_position"] = position
                     st.success("Lesson progress corrected and Current Learning Position updated.")
         else:
             st.caption("Historical whole-day record")
@@ -745,13 +748,13 @@ elif page == "Progress History":
                 ["Completed", "Partially completed", "Not taught"],
                 index=["Completed", "Partially completed", "Not taught"].index(selected["status"]),
                 horizontal=True,
-                key=f"history_status_{selected['id']}"
+                key=scoped_state(st).widget_key(f"history_status_{selected['id']}")
             )
             edited_notes = st.text_area(
                 "What actually happened?",
                 value=selected["notes"],
                 height=160,
-                key=f"history_notes_{selected['id']}"
+                key=scoped_state(st).widget_key(f"history_notes_{selected['id']}")
             )
 
             st.caption(
@@ -794,7 +797,7 @@ elif page == "Current Learning":
         "Teacher AI might otherwise make from the order of the monthly plan."
     )
 
-    saved_position = st.session_state.get("current_learning_position", {})
+    saved_position = scoped_state(st).get("current_learning_position", {})
 
     maths_position = st.text_area(
         "Maths",
@@ -835,7 +838,7 @@ elif page == "Current Learning":
         position = {key: value.replace(MARKER, "\n\nTeacher-confirmed item context:\n").replace(EVIDENCE_MARKER, "\n\nTeacher-confirmed lesson context:\n")
                     for key, value in position.items()}
         save_current_learning_position(position)
-        st.session_state["current_learning_position"] = position
+        scoped_state(st)["current_learning_position"] = position
         st.success("Current Learning Position saved.")
 
 # ---------- TEACHER PROFILE ----------
@@ -844,7 +847,7 @@ elif page == "Teacher Profile":
 
     st.header("Teacher Profile")
 
-    saved_profile = st.session_state.get("teacher_profile", {})
+    saved_profile = scoped_state(st).get("teacher_profile", {})
 
     st.write(
         "Tell Teacher AI about your class, teaching preferences and "
@@ -1080,7 +1083,7 @@ elif page == "Teacher Profile":
         }
 
         save_teacher_profile(profile)
-        st.session_state["teacher_profile"] = profile
+        scoped_state(st)["teacher_profile"] = profile
 
         st.success("Teacher Profile saved.")
 
@@ -1104,7 +1107,7 @@ elif page == "Planning Setup":
 
     st.subheader("Monthly Plans")
     st.caption("Save each month's plan separately. Only dates you explicitly confirm control selection.")
-    saved_planning = st.session_state.get("planning_setup", {})
+    saved_planning = scoped_state(st).get("planning_setup", {})
     monthly_items = storage_call(store.list_monthly_plans)
     for item in monthly_items:
         coverage = f"{item['start_date']} to {item['end_date']}" if item['start_date'] else "confirm dates"
@@ -1112,7 +1115,7 @@ elif page == "Planning Setup":
     chosen_id = st.selectbox("Monthly Plan to add or edit", ["new"] + [p["id"] for p in monthly_items],
                             format_func=lambda value: "Add a new Monthly Plan" if value == "new" else next(p["title"] for p in monthly_items if p["id"] == value))
     existing = next((p for p in monthly_items if p["id"] == chosen_id), None)
-    uploaded_monthly = st.file_uploader("Upload Monthly Plan (PDF or Word)", type=["pdf", "docx"], key=f"monthly_upload_{chosen_id}")
+    uploaded_monthly = st.file_uploader("Upload Monthly Plan (PDF or Word)", type=["pdf", "docx"], key=scoped_state(st).widget_key(f"monthly_upload_{chosen_id}"))
     text = existing["plan_text"] if existing else ""
     filename = existing["source_filename"] if existing else ""
     if uploaded_monthly is not None:
@@ -1179,7 +1182,7 @@ elif page == "Planning Setup":
                 planning_setup.setdefault(field, "")
 
         save_planning_setup(planning_setup)
-        st.session_state["planning_setup"] = planning_setup
+        scoped_state(st)["planning_setup"] = planning_setup
         st.success("Planning setup saved and documents processed.")
 
 # ---------- SAVED DATA BACKUP ----------
@@ -1188,18 +1191,18 @@ with st.expander("Saved data backup"):
     st.caption("Download a copy of all saved class context and progress.")
     if st.button("Prepare saved data backup"):
         backup = storage_call(store.export_backup)
-        st.session_state["cutover_backup"] = json.dumps(
+        scoped_state(st)["cutover_backup"] = json.dumps(
             backup, ensure_ascii=False, indent=2
         )
-    if "cutover_backup" in st.session_state:
+    if "cutover_backup" in scoped_state(st):
         st.download_button(
             "Download saved data backup",
-            data=st.session_state["cutover_backup"],
+            data=scoped_state(st)["cutover_backup"],
             file_name="teacher_ai_saved_data_backup.json",
             mime="application/json",
             on_click="ignore",
         )
-    st.caption("Restore a backup only into an empty database. Existing saved data will never be overwritten.")
+    st.caption("Restore a format-7 backup from this same workspace only into an empty workspace. Other workspaces are unaffected. Older backups require administrator recovery.")
     backup_upload = st.file_uploader("Saved data backup to restore", type=["json"])
     if st.button("Restore saved data backup", disabled=backup_upload is None):
         try:
@@ -1210,7 +1213,7 @@ with st.expander("Saved data backup"):
         restored = storage_call(store.restore_backup, backup)
         if restored:
             for key in ("teacher_profile", "planning_setup", "current_learning_position", "cutover_backup"):
-                st.session_state.pop(key, None)
+                scoped_state(st).pop(key, None)
             st.success("All saved data restored.")
             st.rerun()
         else:
@@ -1219,16 +1222,16 @@ with st.expander("Saved data backup"):
 
 # Numeric diagnostics stay in this session, never in classroom data or logs.
 _snapshot = _run_trace.snapshot()
-st.session_state['performance_last_rerun'] = _snapshot
+scoped_state(st)['performance_last_rerun'] = _snapshot
 if _run_trace.action:
-    st.session_state['performance_last_resource_action'] = _snapshot
+    scoped_state(st)['performance_last_resource_action'] = _snapshot
 with st.expander("About / diagnostics"):
     st.caption("Application build: " + build_identity())
     st.caption("Source fingerprint, not a Git SHA. Match it to the repository build. No secrets or class content are included.")
     st.caption("Times are inclusive where nested: do not sum storage/UI spans with their DB/AI children. DB connect, SQL, fetch and commit/close are separate stages. Rendering means server execution; browser transport/paint is excluded.")
-    if 'performance_last_resource_action' in st.session_state:
+    if 'performance_last_resource_action' in scoped_state(st):
         st.write("Last Resources for Tomorrow action (callback through end of server page)")
-        st.json(st.session_state['performance_last_resource_action'])
+        st.json(scoped_state(st)['performance_last_resource_action'])
     st.write("Runtime package versions")
     st.json(runtime_versions())
     st.write("Current server rerun")

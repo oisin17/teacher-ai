@@ -6,9 +6,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from workspace_scope import ScopedSessionState
 import streamlit as st
 from streamlit.testing.v1 import AppTest
-from persistence import Store, StorageError
+from persistence import StorageError
+from legacy_storage_admin import LegacyStore as Store
 from test_persistence import SQLiteAdapter
 from fixtures import generation_output, sample_plan, outcomes
 
@@ -22,6 +24,11 @@ class AppTests(unittest.TestCase):
             side_effect=lambda *args, **kwargs: SQLiteAdapter(self.root / "external.db"),
         )
         self.connection_patch.start()
+        class AppStore(Store):
+            def __init__(self, url, scope): super().__init__(url)
+            def verify_schema(self): pass
+        self.runtime_patch = patch('persistence.Store', AppStore)
+        self.runtime_patch.start()
         self.store = Store("test-only")
         self.store.initialise(self.root / "missing.db")
         self.store.save_document("teacher_profile", {"class_level": "5th Class", "pupil_count": 22})
@@ -64,6 +71,7 @@ class AppTests(unittest.TestCase):
     def tearDown(self):
         st.cache_resource.clear()
         self.ai_patch.stop()
+        self.runtime_patch.stop()
         self.connection_patch.stop()
         self.temp.cleanup()
 
@@ -71,6 +79,10 @@ class AppTests(unittest.TestCase):
         app = AppTest.from_file(str(self.app_path))
         app.secrets["OPENAI_API_KEY"] = "test-not-a-real-key"
         app.secrets["DATABASE_URL"] = "test-only"
+        app.secrets['ACCESS_MODE'] = 'legacy_owner'
+        app.secrets['LEGACY_OWNER_ACCESS_RESTRICTED'] = True
+        app.secrets['LEGACY_OWNER_USER_ID'] = '00000000-0000-0000-0000-000000000001'
+        app.secrets['LEGACY_WORKSPACE_ID'] = '00000000-0000-0000-0000-000000000002'
         app.run()
         self.assertEqual(len(app.exception), 0)
         return app
@@ -166,7 +178,7 @@ class AppTests(unittest.TestCase):
         app=self.new_app();app.date_input[0].set_value(date(2026,10,1)).run()
         self.button(app, "✨ Generate Today's Plan").click().run()
         self.assertEqual(len(app.error),1)
-        self.assertEqual(app.session_state['last_planning_check']['state'],'Blocked')
+        self.assertEqual(ScopedSessionState(SimpleNamespace(session_state=app.session_state))['last_planning_check']['state'],'Blocked')
         self.assertEqual(self.store.export_backup(),before)
         self.assertEqual(self.client.responses.create.call_count,2) # generation + one repair; no review before code passes
 
@@ -392,7 +404,7 @@ class AppTests(unittest.TestCase):
 
     def test_adaptive_loop_and_plan_survives_radio_rerun_and_fresh_session(self):
         app = self.generated_app()
-        original_plan = app.session_state["todays_plan"]
+        original_plan = ScopedSessionState(SimpleNamespace(session_state=app.session_state))["todays_plan"]
         self.assertTrue(all(item.value is None for item in app.radio[1:]))
         self.button(app, "Mark all completed").click().run()
         self.assertTrue(all(item.value == "Completed" for item in app.radio[1:]))
@@ -403,8 +415,8 @@ class AppTests(unittest.TestCase):
         self.button(app, "Save Today's Progress").click().run()
         self.assertEqual(len(app.exception), 0)
         self.assertEqual(len(app.success), 1)
-        self.assertEqual(app.session_state["todays_plan"], original_plan)
-        self.assertEqual(app.session_state["todays_plan_date"], "2026-09-30")
+        self.assertEqual(ScopedSessionState(SimpleNamespace(session_state=app.session_state))["todays_plan"], original_plan)
+        self.assertEqual(ScopedSessionState(SimpleNamespace(session_state=app.session_state))["todays_plan_date"], "2026-09-30")
         updated = self.store.load_document("current_learning_position")
         self.assertIn("Round five-digit numbers", updated["Maths"])
         self.assertIn("does not establish completion", updated["Maths"])
@@ -417,9 +429,9 @@ class AppTests(unittest.TestCase):
 
         fresh = self.new_app()
         fresh.date_input[0].set_value(date(2026, 9, 30)).run()
-        self.assertEqual(fresh.session_state["teacher_profile"]["pupil_count"], 22)
-        self.assertEqual(fresh.session_state["planning_setup"], self.setup)
-        self.assertEqual(fresh.session_state["current_learning_position"], updated)
+        self.assertEqual(ScopedSessionState(SimpleNamespace(session_state=fresh.session_state))["teacher_profile"]["pupil_count"], 22)
+        self.assertEqual(ScopedSessionState(SimpleNamespace(session_state=fresh.session_state))["planning_setup"], self.setup)
+        self.assertEqual(ScopedSessionState(SimpleNamespace(session_state=fresh.session_state))["current_learning_position"], updated)
         self.assertEqual(fresh.radio[2].value, "Partially completed")
         self.assertEqual(fresh.text_input[2].value, "not taught because of assembly")
         self.assertTrue(self.button(fresh, "✨ Generate Today's Plan").disabled)
@@ -432,7 +444,7 @@ class AppTests(unittest.TestCase):
         self.assertIn("Ask and answer three questions", prompt)
         self.assertIn("learning_intention", prompt)
         self.assertIn("didn't finish final activity", prompt)
-        self.assertEqual(fresh.session_state["todays_plan_date"], "2026-10-01")
+        self.assertEqual(ScopedSessionState(SimpleNamespace(session_state=fresh.session_state))["todays_plan_date"], "2026-10-01")
 
     def test_unset_status_cannot_be_saved_and_no_note_is_needed(self):
         app = self.generated_app()
@@ -462,7 +474,7 @@ class AppTests(unittest.TestCase):
         self.assertEqual(len(app.error), 1)
         self.assertEqual(self.store.load_progress_history(), [])
         self.assertEqual(self.store.load_document("current_learning_position"), before)
-        self.assertEqual(app.session_state["current_learning_position"], before)
+        self.assertEqual(ScopedSessionState(SimpleNamespace(session_state=app.session_state))["current_learning_position"], before)
 
     def test_history_corrects_individual_lessons_and_preserves_snapshot(self):
         plan = sample_plan()
@@ -523,19 +535,19 @@ class AppTests(unittest.TestCase):
         app.text_area[0].set_value("Subtraction completed; multiplication next")
         app.button[0].click().run()
         fresh = self.new_app()
-        self.assertEqual(fresh.session_state["teacher_profile"]["programmes"], "Planet Maths – 5th Class")
-        self.assertEqual(fresh.session_state["current_learning_position"]["Maths"], "Subtraction completed; multiplication next")
+        self.assertEqual(ScopedSessionState(SimpleNamespace(session_state=fresh.session_state))["teacher_profile"]["programmes"], "Planet Maths – 5th Class")
+        self.assertEqual(ScopedSessionState(SimpleNamespace(session_state=fresh.session_state))["current_learning_position"]["Maths"], "Subtraction completed; multiplication next")
 
     def test_failed_save_does_not_change_saved_or_session_profile(self):
         app = self.new_app()
         self.navigate(app, "Teacher Profile")
-        before = dict(app.session_state["teacher_profile"])
+        before = dict(ScopedSessionState(SimpleNamespace(session_state=app.session_state))["teacher_profile"])
         app.text_area[0].set_value("Unsaved change")
         with patch("persistence.Store.save_document", side_effect=StorageError("Database unavailable")):
             app.button[0].click().run()
         self.assertEqual(len(app.exception), 0)
         self.assertEqual(len(app.success), 0)
-        self.assertEqual(app.session_state["teacher_profile"], before)
+        self.assertEqual(ScopedSessionState(SimpleNamespace(session_state=app.session_state))["teacher_profile"], before)
         self.assertEqual(self.store.load_document("teacher_profile"), before)
 
 
@@ -569,7 +581,7 @@ class AppTests(unittest.TestCase):
         self.assertEqual(len(app.exception),0)
         # Maths, English, Gaeilge: one generation and review each.
         self.assertEqual(self.client.responses.create.call_count,6)
-        metrics=app.session_state['tomorrow_'+plan['plan_id']+'_result']
+        metrics=ScopedSessionState(SimpleNamespace(session_state=app.session_state))['tomorrow_'+plan['plan_id']+'_result']
         self.assertGreaterEqual(metrics['end_to_end_seconds'],metrics['action_elapsed_seconds'])
         self.assertEqual(self.store.export_backup(),before)
         widget=next(w for w in app.text_area if w.label=='Classroom content')
@@ -626,7 +638,7 @@ class AppTests(unittest.TestCase):
         self.store.save_period_review(monthly,'2026-09-30',items,True)
         before=self.store.export_backup()
         app=self.new_app()
-        snapshot=app.session_state['performance_last_rerun']
+        snapshot=ScopedSessionState(SimpleNamespace(session_state=app.session_state))['performance_last_rerun']
         self.assertEqual(snapshot['metrics']['storage.list_learning_items']['count'],1)
         self.assertEqual(self.store.export_backup(),before)
         self.client.responses.create.assert_not_called()
@@ -635,7 +647,7 @@ class AppTests(unittest.TestCase):
         from app_diagnostics import build_identity
         app=self.new_app()
         self.assertTrue(any(build_identity() in c.value for c in app.caption))
-        snapshot=app.session_state['performance_last_rerun']
+        snapshot=ScopedSessionState(SimpleNamespace(session_state=app.session_state))['performance_last_rerun']
         self.assertIn('storage.load_day',snapshot['metrics'])
         self.assertNotIn('test-only',str(snapshot))
         self.assertNotIn('test-not-a-real-key',str(snapshot))

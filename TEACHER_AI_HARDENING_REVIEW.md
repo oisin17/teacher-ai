@@ -395,3 +395,18 @@ Concise categories:
 - **Needs teacher/product-owner decision:** OIDC provider, access/ownership,
   pupil-data/retention policy, cloning/import semantics, draft recovery and the
   bounded-pool proposal.
+
+## Approved workspace isolation implementation — staged checkpoint
+
+See WORKSPACE_MIGRATION_RUNBOOK.md for the implemented ownership/RLS/role/backup
+boundaries and pre-write rollback gates; WORKSPACE_MIGRATION_REHEARSAL.json holds
+exact original-column clone inventories. The owner approved product decisions and
+migration design; code is prepared on beta/workspace-isolation, not deployed.
+252 tests pass locally, including 147 PostgreSQL cases and actual restricted-role
+RLS plus scoped Streamlit navigation. A fresh production export survives isolated
+migration with complete payload/count/checksum equivalence. No production cutover,
+snapshot or production restricted-role verification is claimed. Main/live app stays
+d8c4cb6 pending administration, snapshot and owner-private-hosting access.
+
+
+Publication verification — 2 October 2026: implementation commit `0157bd0d975e33342ddf666c3f7864bff1f0f6a9` is published in draft PR #8 (https://github.com/oisin17/teacher-ai/pull/8). GitHub Actions run 37007381622 completed successfully, including baseline regression tests, real PostgreSQL persistence, and the PostgreSQL 16 restricted-role/RLS adversarial stage. Local combined suite: 252 tests passed without skips; 147 distinct PostgreSQL cases (63 legacy and 84 restricted-role scoped cases). Production cutover has not occurred: authenticated administration and a fresh verified database snapshot/restore remain required. Main/live deployment stays at d8c4cb6. Earlier “CI pending” references describe the pre-publication checkpoint.

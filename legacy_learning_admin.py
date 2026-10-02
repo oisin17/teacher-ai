@@ -4,7 +4,7 @@ import json
 from uuid import uuid4
 from datetime import date
 
-LEARNING_VERSION = 4
+LEARNING_VERSION = 3
 STATUSES = ('Not started', 'In progress', 'Completed')
 TYPES = ('discrete', 'recurring', 'broad')
 MARKER = '\n\nConfirmed Monthly Plan item evidence:\n'
@@ -66,11 +66,11 @@ def project(items, updates):
 class LearningStore:
     @staticmethod
     def _learning_raw(connection):
-        return [json.loads(r[0]) for r in connection.execute("SELECT item_data FROM monthly_learning_items WHERE workspace_id = NULLIF(current_setting('teacher_ai.workspace_id', true), '')::uuid  ORDER BY id").fetchall()]
+        return [json.loads(r[0]) for r in connection.execute('SELECT item_data FROM monthly_learning_items ORDER BY id').fetchall()]
 
     @staticmethod
     def _learning_events(connection):
-        return [json.loads(r[0]) for r in connection.execute("SELECT update_data FROM monthly_item_updates WHERE workspace_id = NULLIF(current_setting('teacher_ai.workspace_id', true), '')::uuid  ORDER BY id").fetchall()]
+        return [json.loads(r[0]) for r in connection.execute('SELECT update_data FROM monthly_item_updates ORDER BY id').fetchall()]
 
     @staticmethod
     def _learning(connection, as_of=None):
@@ -115,19 +115,19 @@ class LearningStore:
                     raise StorageError('A referenced item cannot be silently replaced. Archive it and create a new item.')
                 i = {k: v for k, v in i.items() if k not in ('status', 'remaining', 'evidence', 'last_date')}
                 i['revision'] = i.get('revision', 0) + 1
-                connection.execute("INSERT INTO monthly_learning_items (workspace_id, id, item_data) VALUES (NULLIF(current_setting('teacher_ai.workspace_id', true), '')::uuid, %s, %s) ON CONFLICT (id) DO UPDATE SET item_data = EXCLUDED.item_data", (i['id'], json.dumps(i, ensure_ascii=False)))
+                connection.execute('INSERT INTO monthly_learning_items (id, item_data) VALUES (%s, %s) ON CONFLICT (id) DO UPDATE SET item_data = EXCLUDED.item_data', (i['id'], json.dumps(i, ensure_ascii=False)))
                 if i.get('merged_from') and not old and all(id in previous_progress for id in parents):
                     unfinished = [previous_progress[id] for id in parents if previous_progress[id]['status'] != 'Completed']
                     if any(previous_progress[id]['status'] != 'Not started' for id in parents):
                         event = dict(id=uuid4().hex, item_id=i['id'], status='In progress', remaining='; '.join(x['remaining'] or x['description'] for x in unfinished)[:1000] or 'Merged scope needs teacher confirmation', evidence='Merged item; preserved prior evidence: ' + '; '.join(previous_progress[id]['evidence'] for id in parents)[:1500], manual=True, date=date.today().isoformat(), order=max([e['order'] for e in self._learning_events(connection)] + [0]) + 1)
-                        connection.execute("INSERT INTO monthly_item_updates (workspace_id, id, update_data) VALUES (NULLIF(current_setting('teacher_ai.workspace_id', true), '')::uuid, %s, %s)", (event['id'], json.dumps(event)))
-                    linked = [json.loads(r[0]) for r in connection.execute("SELECT item_data FROM carryover_items WHERE workspace_id = NULLIF(current_setting('teacher_ai.workspace_id', true), '')::uuid  ORDER BY id").fetchall() if json.loads(r[0]).get('monthly_item_id') in parents]
+                        connection.execute('INSERT INTO monthly_item_updates (id, update_data) VALUES (%s, %s)', (event['id'], json.dumps(event)))
+                    linked = [json.loads(r[0]) for r in connection.execute('SELECT item_data FROM carryover_items ORDER BY id').fetchall() if json.loads(r[0]).get('monthly_item_id') in parents]
                     for n, carry in enumerate(linked):
                         if n == 0:
                             carry['monthly_item_id'] = i['id']
                         else:
                             carry['state'] = 'removed'
-                        connection.execute("UPDATE carryover_items SET item_data = %s WHERE workspace_id = NULLIF(current_setting('teacher_ai.workspace_id', true), '')::uuid AND id = %s", (json.dumps(carry), carry['id']))
+                        connection.execute('UPDATE carryover_items SET item_data = %s WHERE id = %s', (json.dumps(carry), carry['id']))
 
             self._project_position(connection)
 
@@ -157,7 +157,7 @@ class LearningStore:
                 raise StorageError('Item revisions or progress changed. Take a fresh backup and review again.')
             current_ids = {i['id'] for i in current}
             events = [e for e in self._learning_events(connection) if e['item_id'] in current_ids]
-            raw_carry = [json.loads(r[0]) for r in connection.execute("SELECT item_data FROM carryover_items WHERE workspace_id = NULLIF(current_setting('teacher_ai.workspace_id', true), '')::uuid  ORDER BY id").fetchall()]
+            raw_carry = [json.loads(r[0]) for r in connection.execute('SELECT item_data FROM carryover_items ORDER BY id').fetchall()]
             if canonical(events) != canonical(bundle.get('expected_updates', [])) or canonical(raw_carry) != canonical(bundle.get('expected_carryover', [])):
                 raise StorageError('Progress or carryover changed. Take a fresh backup and review again.')
             old = {i['id']: i for i in self._learning_raw(connection) if i['id'] in current_ids}
@@ -204,11 +204,11 @@ class LearningStore:
                         carry['state'] = 'removed'
                         carry['duplicate_of_monthly_item_id'] = linked
                     seen.add(linked)
-                connection.execute("UPDATE carryover_items SET item_data = %s WHERE workspace_id = NULLIF(current_setting('teacher_ai.workspace_id', true), '')::uuid AND id = %s", (json.dumps(carry, ensure_ascii=False), carry['id']))
+                connection.execute('UPDATE carryover_items SET item_data = %s WHERE id = %s', (json.dumps(carry, ensure_ascii=False), carry['id']))
             for id, item in new.items():
                 item = {k: v for k, v in item.items() if k not in ('status', 'remaining', 'evidence', 'last_date')}
                 item['revision'] = old.get(id, {}).get('revision', 0) + 1
-                connection.execute("INSERT INTO monthly_learning_items (workspace_id, id, item_data) VALUES (NULLIF(current_setting('teacher_ai.workspace_id', true), '')::uuid, %s, %s) ON CONFLICT (id) DO UPDATE SET item_data = EXCLUDED.item_data", (id, json.dumps(item, ensure_ascii=False)))
+                connection.execute('INSERT INTO monthly_learning_items (id, item_data) VALUES (%s, %s) ON CONFLICT (id) DO UPDATE SET item_data = EXCLUDED.item_data', (id, json.dumps(item, ensure_ascii=False)))
             # Item outcome events and lesson snapshots are deliberately untouched.
             self._project_position(connection)
 
@@ -225,7 +225,7 @@ class LearningStore:
             if item_id not in {i['id'] for i in self._learning_raw(connection)}:
                 raise StorageError('Unknown learning item. Refresh.')
             event['order'] = max([e['order'] for e in self._learning_events(connection)] + [0]) + 1
-            connection.execute("INSERT INTO monthly_item_updates (workspace_id, id, update_data) VALUES (NULLIF(current_setting('teacher_ai.workspace_id', true), '')::uuid, %s, %s)", (event['id'], json.dumps(event)))
+            connection.execute('INSERT INTO monthly_item_updates (id, update_data) VALUES (%s, %s)', (event['id'], json.dumps(event)))
             self._project_position(connection)
 
     def _save_item_progress(self, connection, record_id, planning_date, lessons):
@@ -234,7 +234,7 @@ class LearningStore:
         events = self._learning_events(connection)
         for e in events:
             if e.get('record_id') == record_id:
-                connection.execute("DELETE FROM monthly_item_updates WHERE workspace_id = NULLIF(current_setting('teacher_ai.workspace_id', true), '')::uuid AND id = %s", (e['id'],))
+                connection.execute('DELETE FROM monthly_item_updates WHERE id = %s', (e['id'],))
         order = max([e['order'] for e in events] + [0]) + 1
         for lesson in lessons:
             links = {link['item_id'] for link in lesson.get('monthly_item_links', [])}
@@ -263,14 +263,14 @@ class LearningStore:
                 else:
                     update = dict(item_id=item_id, status='In progress', remaining=lesson['note'] or 'Exact remaining scope is not yet confirmed.', evidence=lesson['note'] or lesson['learning_intention'])
                 event = {**update, 'id': uuid4().hex, 'date': planning_date, 'order': order, 'record_id': record_id, 'lesson_id': lesson['lesson_id'], 'manual': False, 'accepted': item_id in accepted or item_id in carry_finished}
-                connection.execute("INSERT INTO monthly_item_updates (workspace_id, id, update_data) VALUES (NULLIF(current_setting('teacher_ai.workspace_id', true), '')::uuid, %s, %s)", (event['id'], json.dumps(event, ensure_ascii=False)))
+                connection.execute('INSERT INTO monthly_item_updates (id, update_data) VALUES (%s, %s)', (event['id'], json.dumps(event, ensure_ascii=False)))
 
     def link_carryover_item(self, carry_id, item_id):
         """Explicit teacher link; never infer a connection from a shared subject."""
         from persistence import StorageError
         with self._connection() as connection:
             self._lock(connection)
-            row = connection.execute("SELECT item_data FROM carryover_items WHERE workspace_id = NULLIF(current_setting('teacher_ai.workspace_id', true), '')::uuid AND id = %s", (carry_id,)).fetchone()
+            row = connection.execute('SELECT item_data FROM carryover_items WHERE id = %s', (carry_id,)).fetchone()
             learning = next((i for i in self._learning(connection) if i['id'] == item_id and not i['archived']), None)
             if not row or not learning:
                 raise StorageError('Choose a saved active learning item.')
@@ -279,4 +279,4 @@ class LearningStore:
                 raise StorageError('This learning already has a carryover entry.')
             carry['monthly_item_id'] = item_id
             carry['state'] = 'outstanding' if learning['status'] != 'Completed' else 'completed'
-            connection.execute("UPDATE carryover_items SET item_data = %s WHERE workspace_id = NULLIF(current_setting('teacher_ai.workspace_id', true), '')::uuid AND id = %s", (json.dumps(carry), carry_id))
+            connection.execute('UPDATE carryover_items SET item_data = %s WHERE id = %s', (json.dumps(carry), carry_id))
