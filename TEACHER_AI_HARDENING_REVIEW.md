@@ -89,6 +89,9 @@ measured separately. `db.sql.lock` includes lock round-trip/wait; it cannot spli
 those two. SQL execute includes provider execution/network transfer; it is not
 an EXPLAIN ANALYZE server CPU estimate. `db.fetch` measures Python fetch work.
 
+Snapshots end before the diagnostics area itself is rendered; they include the
+main server page, not that small footer or frontend transport/paint.
+
 Use About / diagnostics after a rerun or an explicitly requested unsaved batch.
 `elapsed_seconds` covers callback -> end of server page; nested `storage.*`,
 `preparation.*`, `resource.*`, `ui.*` spans explain paths. Add only disjoint leaf
@@ -318,3 +321,68 @@ background jobs, cross-lesson AI batching and durable drafts unless loss materia
 blocks beta. Needs owner decision: provider/invites, owner vs collaborator rights,
 retention/deletion and pupil-data policy, cloning/restore semantics, durable draft
 recovery, acceptable latency/cost and whether measured pooling work is justified.
+
+
+## Final technical verification (not classroom acceptance)
+
+Code commit `77c35e85984f64a97d5627f47f5d26e42a276804` passed CI
+36996222305: 165 tests and 63 tests rerun on PostgreSQL 16 (job 110803431564).
+Live source identity `source-bc5915edc7272e50` matches the same committed code.
+Installed deployment versions observed: Streamlit 1.64.0, OpenAI 3.22.1,
+psycopg 3.3.6, pypdf 6.19.0, python-docx 1.2.0.
+
+Warm saved-day view after carryover-read reduction: 23.2253s, 10 connections,
+33 reads, learning-list calls 2 (previous view: 24.8753s / 11 / 35 / 3).
+The operation-count reduction is verified; elapsed samples are not a controlled
+benchmark or a performance guarantee.
+
+One unsaved technical profiling batch used four existing approved Friday lessons,
+with the instruction: no printing, short resources and recall-only prompts for
+unknown prior tasks. It produced six drafts; four passed, both Art drafts were
+code-blocked for unavailable source evidence references. No candidate, resource,
+plan or teaching outcome was saved. The blocked Art group therefore used no AI
+review; total SDK calls were 7 = 4 generation + 3 review, no repair/retry loop.
+This is a performance sample, not renewed classroom acceptance of the material.
+
+| Disjoint stage | Count | Seconds |
+|---|---:|---:|
+| AI generation | 4 | 9.9175 |
+| AI review | 3 | 4.0548 |
+| DB connection setup | 14 | 12.6505 |
+| SQL reads | 69 | 15.6262 |
+| SQL setup | 14 | 4.1484 |
+| Advisory lock requests | 5 | 0.7413 |
+| Fetch operations | 69 | 0.0051 |
+| Commit/rollback/close | 14 | 2.0758 |
+| Other main-page execution (residual) | — | 0.1980 |
+| Main-server-page elapsed | — | 49.4176 |
+
+Totals: AI 13.9723s, disjoint DB stages 35.2473s. Six resource-card render calls
+took 0.0477s (nested within residual execution, not additive). Fresh generation
+resource_context calls took 12.7015s total for four groups (nested within DB).
+The Generate action itself was 26.6862s; ~22.73s was the rest of the main rerun.
+This directly explains the overhead: database/connect/round-trip work dominates.
+No SQL DML write stage occurred in the sampled batch or warm read-only reruns.
+No backup restore, classroom Save or progress/carryover action was pressed.
+Prior accepted backup/restore behavior was not rerun.
+
+The known unavailable-evidence-reference generation failure remains safely blocked
+and unsaved; do not count that as factual acceptance or add an automatic repair
+loop. No full planning rubric was run. No authentication, ownership migration,
+connection pool, service or durable draft storage was implemented.
+
+Concise categories:
+- **Safe work completed:** numeric diagnostics/build visibility, two proved
+  duplicate-read reductions, malformed-output containment, instruction resilience,
+  stateless response-storage default and 13 valuable regression tests.
+- **Issues found:** database latency/round trips, global shared ownership, missing
+  tenant authorization, oversized-upload risk, unnecessary prompt data, floating
+  dependencies, last-write-wins edits and fragile hot reload/draft sessions.
+- **Recommended before multi-user beta:** workspace migration/scoped Store/RLS,
+  two-tenant tests, invite identity gates, scoped backups, privacy/input/budget
+  controls and cold-deployment/concurrency checks.
+- **Can wait until after beta:** document exports, packs/templates, holiday
+  calendar, collaboration and durable drafts unless recovery is a beta requirement.
+- **Needs teacher/product-owner decision:** OIDC provider, access/ownership,
+  pupil-data/retention policy, cloning/import semantics, draft recovery and the
+  bounded-pool proposal.

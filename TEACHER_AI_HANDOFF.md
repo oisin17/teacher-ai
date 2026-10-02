@@ -5,10 +5,11 @@
 **Handoff date:** 2026-10-02  
 **Target:** testable V1 by February 2027, with real classroom/placement testing beginning in January 2027.
 
-**Latest completed milestone:** Resources for Tomorrow V1, deployed and live accepted.
-152 automated tests pass; 61 persistence tests pass against PostgreSQL 16 in CI.
-See the final Resources for Tomorrow acceptance section at the end for timings,
-data comparison, restore upload and remaining limits.
+**Latest completed milestone:** hardening and multi-user readiness review; safe
+diagnostics and fixes deployed. Resources for Tomorrow V1 remains complete.
+165 automated tests pass; 63 persistence tests pass against PostgreSQL 16 in CI.
+See TEACHER_AI_HARDENING_REVIEW.md and the final review section below. Prior
+Resources for Tomorrow acceptance/data/restore evidence remains preserved.
 
 ## 1. Product vision
 
@@ -1404,7 +1405,7 @@ verified in isolation/CI; the live production acceptance verifies upload/refusal
   for this approved Resources for Tomorrow V1 scope.
 
 
-## Hardening and multi-user readiness review — 2026-10-02 checkpoint
+## Hardening and multi-user readiness review — 2026-10-02 completed
 
 Baseline main 44fc689 and CI 36985034503 inspected; deployed Tomorrow remains
 complete. No classroom acceptance was repeated and no genuine teaching outcomes
@@ -1420,7 +1421,7 @@ across ordinary navigation; current stateless AI calls default store=False.
 Resource core V8, UI V10, Tomorrow V3, persistence V14; rubric remains V18.
 No new schema/auth/service, pooling, cross-request cache or durable drafts.
 Full suite: 165 tests pass locally, including 63 persistence cases in real PostgreSQL CI.
-Final CI and live numeric/read-only deployment verification follow this checkpoint.
+Final code CI and live technical profiling completed; details below.
 
 Diagnostic code commit 0cd3c24 passed real PostgreSQL CI 36995820976. Live source
 fingerprint f726d1d4a7b8838c matched. Warm read-only saved-day rerun: 24.8753s,
@@ -1428,3 +1429,32 @@ fingerprint f726d1d4a7b8838c matched. Warm read-only saved-day rerun: 24.8753s,
 commit/close 1.6373s. Disjoint DB stages consumed ~99.5% of that no-AI rerun.
 One measured duplicate carryover-choice read is now removed with an additional
 regression test. Bounded pooling is proposed in the review, not implemented.
+
+Final code commit 77c35e85984f64a97d5627f47f5d26e42a276804: CI 36996222305
+passed 165 tests plus 63 rerun on PostgreSQL 16. Live build source-bc5915edc7272e50
+matched local/committed Python sources + requirements, with package versions shown
+separately. Final documentation-only commit does not alter that build fingerprint.
+
+Warm saved-day view after the carryover optimization: 23.2253s, 10 connections,
+33 SELECTs (previous sample 24.8753s / 11 connections / 35 SELECTs). One unsaved
+technical batch from the four real approved Friday lessons produced six drafts:
+four Pass, both Art drafts code-blocked for unavailable source evidence references.
+7 SDK calls = 4 generation + 3 review, AI-only 13.9723s. Main server page elapsed
+49.4176s; DB connect 12.6505s, reads 15.6262s, setup 4.1484s, locks 0.7413s,
+fetch 0.0051s, commit/close 2.0758s. Disjoint DB total 35.2473s; other main-page
+execution 0.1980s, including six resource cards 0.0477s. Main-page timing excludes
+diagnostics footer/browser transport/paint. No class DML write stage occurred.
+No candidates saved, no teaching/progress/carryover action pressed and no planning
+rubric run. This was technical profiling, not genuine classroom acceptance.
+
+Before beta: mandatory workspace ownership, scoped Store and PostgreSQL RLS with
+separate runtime/migration roles, scoped backups and adversarial two-tenant tests;
+then invite-only OIDC/membership/session cleanup. Login alone does not isolate data.
+No authentication or ownership migration implemented. The report maps all 13
+persistent tables and every important read/write path, preserves historical IDs
+and resource versions in its migration design and lists next five tasks.
+
+Owner decisions: provider/invites and rights, pupil-data/retention policy, backup
+cloning semantics, durable-draft recovery and whether to proceed with the measured
+bounded connection-pool proposal. No pool, cross-request cache, new service or
+durable drafts added. Larger performance changes require a reviewed proposal.
