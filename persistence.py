@@ -8,6 +8,8 @@ import sqlite3
 from contextlib import closing, contextmanager
 from datetime import date
 from pathlib import Path
+from time import perf_counter
+from app_diagnostics import span, timed, TimedConnection, _active
 
 from carryover import validate_item, before_date
 from monthly_plans import validate_monthly_plan, iso_date
@@ -28,7 +30,7 @@ DOCUMENTS = {
     "current_learning_position": "position_data",
 }
 LOCK_ID = 73190421
-PERSISTENCE_VERSION = 13
+PERSISTENCE_VERSION = 14
 
 
 from monthly_learning import LearningStore, validate_item as validate_learning_item, validate_update, MARKER, planning_allowed, display_wording
@@ -47,11 +49,23 @@ class Store(LearningStore):
         try:
             # Each operation gets a short-lived connection. Safe after Neon
             # scale-to-zero and Streamlit reruns; no stale global connection.
-            with psycopg.connect(
-                self._database_url, connect_timeout=15, sslmode="require"
-            ) as connection:
-                connection.execute("SET LOCAL statement_timeout = '30s'")
-                yield connection
+            with span('db.connect'):
+                connection = psycopg.connect(
+                    self._database_url, connect_timeout=15, sslmode="require"
+                )
+            finished = None
+            try:
+                with connection:
+                    measured = TimedConnection(connection)
+                    measured.execute("SET LOCAL statement_timeout = '30s'")
+                    try:
+                        yield measured
+                    finally:
+                        finished = perf_counter()
+            finally:
+                trace = _active.get()
+                if trace is not None and finished is not None:
+                    trace.record('db.commit_rollback_close', perf_counter() - finished)
         except StorageError:
             raise
         except Exception:
@@ -200,17 +214,17 @@ class Store(LearningStore):
                 tuple(plan[key] for key in ("id", "title", "source_filename", "plan_text", "start_date", "end_date")))
 
     @staticmethod
-    def _carryover(connection, as_of=None):
+    def _carryover(connection, as_of=None, learning=None, history=None):
         items = [json.loads(row[0]) for row in connection.execute("SELECT item_data FROM carryover_items ORDER BY id").fetchall()]
         finished = {}
-        for row in Store._history(connection):
+        for row in (Store._history(connection) if history is None else history):
             if as_of and row["planning_date"] > as_of:
                 continue
             for lesson in row.get("lessons", []):
                 if lesson["status"] == "Completed":
                     for id in lesson.get("completed_carryover_ids", []):
                         finished[id] = row["planning_date"]
-        learning = {i['id']: i for i in Store._learning(connection, as_of)}
+        learning = {i['id']: i for i in (Store._learning(connection, as_of) if learning is None else learning)}
         for item in items:
             if item.get('monthly_item_id'):
                 linked = learning.get(item['monthly_item_id'])
@@ -430,16 +444,19 @@ class Store(LearningStore):
                     plan["monthly_plan"] = progress["monthly_plan"]
         return {"plan": plan, "progress": progress}
 
+    @timed('preparation.planning_evidence')
     def _quality_context(self, connection, planning_date):
         documents = {}
         for name, column in DOCUMENTS.items():
             row = connection.execute(f"SELECT {column} FROM {name} WHERE id = 1").fetchone()
             documents[name] = json.loads(row[0]) if row else {}
         monthly = next((m for m in self._monthly(connection) if m.get('start_date') and m['start_date'] <= planning_date <= m['end_date']), None)
+        learning = self._learning(connection, planning_date)
+        history = self._history(connection)
         return dict(planning_date=planning_date, monthly_plan=monthly,
-                    learning_items=self._learning(connection, planning_date),
-                    carryover=self._carryover(connection, planning_date),
-                    recent_progress=sorted([r for r in self._history(connection) if r['planning_date'] <= planning_date], key=lambda r: (r['planning_date'], r['id']), reverse=True)[:10], **documents)
+                    learning_items=learning,
+                    carryover=self._carryover(connection, planning_date, learning=learning, history=history),
+                    recent_progress=sorted([r for r in history if r['planning_date'] <= planning_date], key=lambda r: (r['planning_date'], r['id']), reverse=True)[:10], **documents)
 
     def planning_quality_context(self, planning_date):
         with self._connection() as connection:
@@ -888,3 +905,10 @@ class Store(LearningStore):
                     update['record_id'] = record_ids[update['record_id']]
                 connection.execute('INSERT INTO monthly_item_updates (id, update_data) VALUES (%s, %s)', (update['id'], json.dumps(update)))
         return True
+
+
+# Public storage entry points, including inherited monthly-item operations.
+# Names are code constants; no arguments or result contents enter diagnostics.
+for _method in dir(Store):
+    if not _method.startswith('_') and callable(getattr(Store, _method)):
+        setattr(Store, _method, timed('storage.' + _method)(getattr(Store, _method)))

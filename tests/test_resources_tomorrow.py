@@ -126,3 +126,22 @@ class TomorrowTests(unittest.TestCase):
         self.assertEqual(result['evidence_changed_status'],'Evidence changed')
         self.assertEqual(result['earlier_plan_status'],'No resource saved')
         self.assertEqual(rs,before);self.store.save_resource.assert_not_called()
+
+    def test_year_and_leap_boundaries(self):
+        self.assertEqual(next_weekday('2027-12-31'), '2028-01-03')
+        self.assertEqual(next_weekday('2028-02-28'), '2028-02-29')
+        self.assertEqual(next_weekday('2028-02-29'), '2028-03-01')
+
+    def test_malformed_generation_group_does_not_stop_next_lesson(self):
+        lesson=dict(self.context['lesson'],lesson_id='l2');self.plan['lessons'].append(lesson)
+        self.store.resource_context.side_effect=lambda day,p,l: dict(self.context,lesson=self.plan['lessons'][0 if l=='l' else 1])
+        c=fake_client();original=c.responses.create.side_effect
+        def response(**kwargs):
+            packet=json.loads(kwargs['input'].rsplit('\n',1)[-1])
+            if kwargs['text']['format']['name']=='lesson_resource_batch' and packet['context']['lesson']['lesson_id']=='l':
+                return SimpleNamespace(output_text=json.dumps({'resources':[dict(item(),body=['malformed'])]}))
+            return original(**kwargs)
+        c.responses.create.side_effect=response
+        r=run_batches(self.store,c,self.plan,[self.request(),dict(lesson_id='l2',type='whiteboard')])
+        self.assertEqual(r['calls'],3);self.assertEqual(len(r['failures']),1)
+        self.assertEqual(r['resources'][0]['lesson_id'],'l2');self.store.save_resource.assert_not_called()

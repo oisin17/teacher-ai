@@ -1402,3 +1402,22 @@ verified in isolation/CI; the live production acceptance verifies upload/refusal
 - PDFs/Word/slides, daily packs, holidays, templates and guaranteed browser draft
   recovery remain deferred. No further implementation/acceptance work is pending
   for this approved Resources for Tomorrow V1 scope.
+
+
+## Hardening and multi-user readiness review — 2026-10-02 checkpoint
+
+Baseline main 44fc689 and CI 36985034503 inspected; deployed Tomorrow remains
+complete. No classroom acceptance was repeated and no genuine teaching outcomes
+were saved. See TEACHER_AI_HARDENING_REVIEW.md for all 13 persistent tables,
+query/write inventory, proposed legacy-workspace migration/RLS, scoped backups,
+OIDC proposal (not implemented), security findings and next five tasks.
+
+Safe changes: session-only numeric performance tracing; collapsed source-build
+fingerprint/package diagnostics (NOT a claimed Git SHA); three duplicate SELECTs
+removed per locked evidence packet with exact-output regression coverage; malformed
+resource generation contained per lesson group; regeneration instruction retained
+across ordinary navigation; current stateless AI calls default store=False.
+Resource core V8, UI V10, Tomorrow V3, persistence V14; rubric remains V18.
+No new schema/auth/service, pooling, cross-request cache or durable drafts.
+Full-suite target: 164 tests, including 63 persistence cases in real PostgreSQL CI.
+Final CI and live numeric/read-only deployment verification follow this checkpoint.

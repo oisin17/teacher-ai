@@ -6,8 +6,9 @@ import re
 import time
 from datetime import date, datetime, timezone
 from uuid import uuid4
+from app_diagnostics import timed
 
-VERSION = 7
+VERSION = 8
 TYPES = {
  'whiteboard': 'Mini-whiteboard questions', 'practice': 'Practice / task sheet',
  'differentiated': 'Differentiated task sheet', 'quiz': 'Quiz / retrieval questions',
@@ -67,6 +68,7 @@ def code_findings(item,context,source,instruction):
  if 'no printing' in instruction.casefold() and re.search(r'\b(?:print out|photocopy|hand out printed)\b',text,re.I): errors.append('Printing contradicts the teacher instruction.')
  return errors
 
+@timed('resource.review_and_validation')
 def review(items,context,source,instruction,client):
  start=time.perf_counter(); errors={i['type']:code_findings(i,context,source,instruction) for i in items}; eligible=[i for i in items if not errors[i['type']]]
  calls=0
@@ -82,6 +84,7 @@ def review(items,context,source,instruction,client):
    for i in eligible: errors[i['type']]=['Resource check unavailable ('+type(e).__name__+'). Draft not saved.']
  return errors,{'review_seconds':round(time.perf_counter()-start,2),'review_calls':calls}
 
+@timed('resource.generation_and_check')
 def generate(context,types,instruction,source,answers,client):
  if not types or len(types)>4 or len(set(types))!=len(types) or any(t not in TYPES for t in types): raise ResourceFailure('Select one to four resource types.')
  if len(instruction)>300 or len(source)>16000: raise ResourceFailure('Instruction or source is too long.')
@@ -90,7 +93,7 @@ def generate(context,types,instruction,source,answers,client):
  try:
   result=client.responses.create(model='gpt-5.4-mini',text={'format':FORMAT},input=RULES+'\n'+json.dumps({'context':context,'verified_calendar':calendar_labels(context),'selected_types':types,'instruction':instruction,'source':source,'include_useful_answers':answers},ensure_ascii=False))
   items=json.loads(result.output_text)['resources']
-  if len(items)!=len(types) or {i['type'] for i in items}!=set(types): raise ValueError('Incorrect resource types')
+  if not isinstance(items,list) or len(items)!=len(types) or any(not isinstance(i,dict) or any(not isinstance(i.get(k),str) for k in ('type','title','body','guidance')) or not isinstance(i.get('evidence_ids'),list) or any(not isinstance(ref,str) for ref in i['evidence_ids']) for i in items) or {i['type'] for i in items}!=set(types): raise ValueError('Malformed resource batch')
  except Exception as e: raise ResourceFailure('Generation failed ('+type(e).__name__+'). Existing resources unchanged.') from None
  seconds=round(time.perf_counter()-start,2)
  errors,metrics=review(items,context,source,instruction,client)

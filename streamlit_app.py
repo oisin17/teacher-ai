@@ -4,6 +4,8 @@ import io
 import copy
 import hashlib
 from time import perf_counter
+from app_diagnostics import start_trace, TimedAI, build_identity, runtime_versions
+_run_trace = start_trace(st.session_state.pop("performance_action_trace", None))
 from uuid import uuid4
 from monthly_plans import suggest_dates
 import importlib
@@ -33,7 +35,7 @@ if refresh_lessons:
 import persistence
 # Streamlit hot reload can retain the previous imported storage module.
 # Reload only when that cached module lacks this rollout's additive API.
-if refresh_lessons or getattr(persistence, "PERSISTENCE_VERSION", None) != 13:
+if refresh_lessons or getattr(persistence, "PERSISTENCE_VERSION", None) != 14:
     importlib.reload(persistence)
 from persistence import Store, StorageError
 import planning_quality
@@ -41,7 +43,7 @@ if getattr(planning_quality, "QUALITY_MODULE_VERSION", None) != 18:
     importlib.reload(planning_quality)
 from planning_quality import quality_gate, QualityFailure, protected_blocks
 import lesson_resources_ui
-if getattr(lesson_resources_ui, 'MODULE_VERSION', None) != 9:
+if getattr(lesson_resources_ui, 'MODULE_VERSION', None) != 10:
     importlib.reload(lesson_resources_ui)
 import json
 from datetime import date, timedelta
@@ -50,7 +52,7 @@ from lesson_progress import (
     parse_generated_plan, plan_markdown,
 )
 
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+client = TimedAI(OpenAI(api_key=st.secrets["OPENAI_API_KEY"]))
 
 def storage_call(operation, *args):
     try:
@@ -1211,3 +1213,21 @@ with st.expander("Saved data backup"):
             st.rerun()
         else:
             st.info("The database already contains saved data. Nothing has been overwritten.")
+
+
+# Numeric diagnostics stay in this session, never in classroom data or logs.
+_snapshot = _run_trace.snapshot()
+st.session_state['performance_last_rerun'] = _snapshot
+if _run_trace.action:
+    st.session_state['performance_last_resource_action'] = _snapshot
+with st.expander("About / diagnostics"):
+    st.caption("Application build: " + build_identity())
+    st.caption("Source fingerprint, not a Git SHA. Match it to the repository build. No secrets or class content are included.")
+    st.caption("Times are inclusive where nested: do not sum storage/UI spans with their DB/AI children. DB connect, SQL, fetch and commit/close are separate stages. Rendering means server execution; browser transport/paint is excluded.")
+    if 'performance_last_resource_action' in st.session_state:
+        st.write("Last Resources for Tomorrow action (callback through end of server page)")
+        st.json(st.session_state['performance_last_resource_action'])
+    st.write("Runtime package versions")
+    st.json(runtime_versions())
+    st.write("Current server rerun")
+    st.json(_snapshot)

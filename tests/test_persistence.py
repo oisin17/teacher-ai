@@ -887,6 +887,42 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(self.store.load_day('2026-09-30')['plan']['lessons'][1]['monthly_item_links'][0]['item_id'], 'item-0')
 
 
+    def test_evidence_reuse_preserves_packet_and_eliminates_repeated_reads(self):
+        from app_diagnostics import start_trace, _active
+        self.learning_setup()
+        before=self.store.export_backup()
+        with self.store._connection() as connection:
+            expected=self.store._quality_context(connection, '2026-10-01')
+            expected['carryover']=self.store._carryover(connection, '2026-10-01')
+        token=_active.set(None)
+        try:
+            trace=start_trace()
+            with patch.object(Store,'_learning',wraps=Store._learning) as learning, patch.object(Store,'_history',wraps=Store._history) as history:
+                actual=self.store.planning_quality_context('2026-10-01')
+            self.assertEqual(actual,expected)
+            self.assertEqual(learning.call_count,1);self.assertEqual(history.call_count,1)
+            metrics=trace.snapshot()['metrics']
+            self.assertEqual(metrics['db.connect']['count'],1)
+            self.assertEqual(metrics['db.sql.read']['count'],8)
+            self.assertEqual(metrics['db.sql.lock']['count'],1)
+            self.assertIn('db.commit_rollback_close',metrics)
+        finally:
+            _active.reset(token)
+        self.assertEqual(before,self.store.export_backup())
+
+    def test_commit_failure_is_sanitized_and_not_reported_as_confirmed_save(self):
+        from unittest.mock import Mock
+        class BrokenCommit:
+            def __enter__(self): return self
+            def execute(self,*args): return Mock()
+            def __exit__(self,*args): raise RuntimeError('SECRET database-url')
+        with patch('persistence.psycopg.connect',return_value=BrokenCommit()):
+            with self.assertRaises(StorageError) as failure:
+                self.store.save_document('teacher_profile',{'class_level':'test'})
+        self.assertNotIn('SECRET',str(failure.exception))
+        self.assertNotIn('database-url',str(failure.exception))
+        self.assertIn('not been confirmed saved',str(failure.exception))
+
     def test_tomorrow_raw_approved_plans_only_and_exact_contexts(self):
         plan,resource=self.resource_fixture()
         before=self.store.export_backup()

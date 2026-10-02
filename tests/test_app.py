@@ -609,5 +609,26 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.client.responses.create.call_count,calls)
         self.assertEqual(self.store.list_resources('2026-09-30'),[])
 
+    def test_regeneration_instruction_survives_navigation_without_ai_or_save(self):
+        app=self.resource_app();app.multiselect[0].set_value(['whiteboard'])
+        self.button(app,'Generate selected resources').click().run()
+        calls=self.client.responses.create.call_count
+        before=self.store.export_backup()
+        next(w for w in app.text_input if w.label=='Generation instruction').set_value('No printing; keep six questions').run()
+        self.navigate(app,'Teacher Profile');self.navigate(app,'Today')
+        self.assertTrue(any(w.value=='No printing; keep six questions' for w in app.text_input))
+        self.assertEqual(self.client.responses.create.call_count,calls)
+        self.assertEqual(self.store.export_backup(),before)
+
+    def test_diagnostics_present_without_secrets_or_implicit_ai(self):
+        from app_diagnostics import build_identity
+        app=self.new_app()
+        self.assertTrue(any(build_identity() in c.value for c in app.caption))
+        snapshot=app.session_state['performance_last_rerun']
+        self.assertIn('storage.load_day',snapshot['metrics'])
+        self.assertNotIn('test-only',str(snapshot))
+        self.assertNotIn('test-not-a-real-key',str(snapshot))
+        self.client.responses.create.assert_not_called()
+
 if __name__ == "__main__":
     unittest.main()

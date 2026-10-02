@@ -2,11 +2,12 @@
 from collections import defaultdict
 from datetime import date, timedelta
 from time import perf_counter
+from app_diagnostics import timed
 
 from lesson_resources import suggestions, source_available, digest, generate, regenerate_resource, ResourceFailure
 from persistence import StorageError
 
-VERSION = 2
+VERSION = 3
 
 
 class _Meter:
@@ -69,6 +70,7 @@ def lesson_choices(context, saved):
     return choices
 
 
+@timed('resource.batch_preparation_and_execution')
 def run_batches(store, client, plan, requests, batch_instruction='', on_result=None):
     """Each new-resource lesson group uses one generation and one review.
 

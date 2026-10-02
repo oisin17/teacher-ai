@@ -2,16 +2,17 @@
 import copy
 import importlib
 import lesson_resources
-if lesson_resources.VERSION != 7:
+if lesson_resources.VERSION != 8:
  importlib.reload(lesson_resources)
 import streamlit as st
 from lesson_resources import TYPES, suggestions, generate, regenerate_resource, review, digest, checked_digest, ResourceFailure
 from persistence import StorageError
+from app_diagnostics import timed, Trace
 import resources_tomorrow
-if resources_tomorrow.VERSION != 2:
+if resources_tomorrow.VERSION != 3:
  importlib.reload(resources_tomorrow)
 
-MODULE_VERSION = 9
+MODULE_VERSION = 10
 
 
 def _message(error):
@@ -20,6 +21,10 @@ def _message(error):
 
 def _remember_inputs(widget_key, draft_key):
  st.session_state.setdefault('resource_edit_drafts',{})[draft_key]={field:st.session_state[widget_key+'_'+field] for field in ('title','body','guidance')}
+
+
+def _remember_instruction(key, draft_key):
+ st.session_state.setdefault('resource_instruction_drafts',{})[draft_key]=st.session_state[key]
 
 
 def _remember_tomorrow(key):
@@ -34,8 +39,10 @@ def _tomorrow_input(function, label, key, default, **kwargs):
 def _mark_tomorrow_start(prefix):
  from time import perf_counter
  st.session_state[prefix+'_started']=perf_counter()
+ st.session_state['performance_action_trace']=Trace(action=True)
 
 
+@timed('ui.resource_editor')
 def editor(store, client, resource, pending_key, view='lesson'):
  rid=resource['id']; epoch=st.session_state.get('resource_epoch_'+rid,0)
  draft_key=f'resource_{rid}_{resource["revision"]}_{epoch}'
@@ -81,7 +88,8 @@ def editor(store, client, resource, pending_key, view='lesson'):
   st.code(resource['body'],language=None)
   if resource['guidance']: st.code(resource['guidance'],language=None)
  with st.expander('Regenerate this resource'):
-  instruction=st.text_input('Generation instruction',value=resource['instruction'],max_chars=300,key=key+'_instruction')
+  st.session_state.setdefault(key+'_instruction',st.session_state.setdefault('resource_instruction_drafts',{}).get(draft_key,resource['instruction']))
+  instruction=st.text_input('Generation instruction',max_chars=300,key=key+'_instruction',on_change=_remember_instruction,args=(key+'_instruction',draft_key))
   if st.button('Regenerate resource',key=key+'_regen'):
    try:
     context=store.resource_context(resource['planning_date'],resource['plan_id'],resource['lesson_id'])
@@ -152,6 +160,7 @@ def historical_panel(saved,plan):
      with st.expander('Teacher guidance — '+r['title']): st.code(r['guidance'],language=None)
 
 
+@timed('ui.tomorrow_panel')
 def tomorrow_panel(store, client, after):
  from resources_tomorrow import next_plan, lesson_choices, run_batches
  from time import perf_counter
