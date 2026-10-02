@@ -3,7 +3,7 @@ import json
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
-from lesson_resources import TYPES, suggestions, generate, review, digest, checked_digest, ResourceFailure, validate_saved
+from lesson_resources import FORMAT, TYPES, suggestions, generate, review, digest, checked_digest, ResourceFailure, validate_saved
 
 
 def context():
@@ -22,6 +22,9 @@ class ResourceTests(unittest.TestCase):
   self.assertEqual(len(TYPES),11)
   for subject,expected in [('Maths','whiteboard'),('Gaeilge','gaeilge'),('History','quiz'),('Art','checklist'),('English','discussion')]:
    c=context();c['lesson']['subject']=subject;self.assertIn(expected,suggestions(c['lesson']))
+ def test_evidence_schema_constrains_categories(self):
+  refs=FORMAT['schema']['properties']['resources']['items']['properties']['evidence_ids']['items']['enum']
+  self.assertEqual(refs,['lesson','profile','learning','carryover','current','source'])
  def test_no_source_comprehension_zero_calls(self):
   c=client()
   with self.assertRaises(ResourceFailure): generate(context(),['comprehension'],'','Reading Zone',True,c)
