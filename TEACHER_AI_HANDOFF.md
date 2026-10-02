@@ -5,6 +5,11 @@
 **Handoff date:** 2026-10-02  
 **Target:** testable V1 by February 2027, with real classroom/placement testing beginning in January 2027.
 
+**Latest completed milestone:** Resources for Tomorrow V1, deployed and live accepted.
+152 automated tests pass; 61 persistence tests pass against PostgreSQL 16 in CI.
+See the final Resources for Tomorrow acceptance section at the end for timings,
+data comparison, restore upload and remaining limits.
+
 ## 1. Product vision
 
 Teacher AI is an adaptive planning assistant for primary-school teachers.
@@ -1246,3 +1251,154 @@ CI. Deployment, live acceptance, latency measurements, fresh export comparison a
 restore-upload check are pending at this checkpoint. A read-only resources_probe
 mode checks a deliberately wrong copied Maths answer beside a genuine saved
 sibling; it never saves candidates or teaching outcomes.
+
+
+## Resources for Tomorrow V1 — final acceptance (2026-10-02)
+
+Status: complete, deployed and live-tested. Implementation commit 2096d44;
+complete preparation timer 8930adc; calendar-grounding refinement 78ab276.
+The latest code CI run 36983305666 passed all 152 tests and all 61 real
+PostgreSQL persistence/migration/concurrency tests. No new infrastructure,
+services, resource table or backup format. Planning rubric remains V18.
+Final module versions: resource core 7, resource UI 9, Tomorrow orchestration 2,
+persistence API 13. API v13 is additive read support, not a new schema model.
+
+### Final behavior
+
+Resources for Tomorrow lives in a compact Today-page expander. It uses the next
+weekday after the explicitly selected planning date; the date defaults to today
+in Europe/Dublin and now survives ordinary navigation. Friday/Saturday/Sunday
+advance to Monday. A missing exact-date approved plan is explained without
+silently choosing a later day. “Choose another saved day” is explicit and labels
+the chosen date. Saved approved raw day_plans are used, never progress snapshots.
+
+Code ranks 1–3 existing V1 suggestion types per lesson, considering phases and
+unknown carryover. Two missing useful types are normally selected; comprehension
+is opt-in and needs source. Exact current saved types show “Already saved —
+regenerate?” and default unchecked. Selecting one takes the shared V1 individual
+regeneration path, retaining its ID/revision/creation time/title until explicit
+Save. Changed evidence is labelled separately; replaced-plan resources are kept
+historical and never attached by matching titles. Show saved resources exposes
+existing V1 cards, including types outside the three suggestions.
+
+New types batch by lesson and effective instruction/source/answer preference.
+Normal groups use one generation plus one compact resource review; multiple
+resources share these calls. Saved-resource regeneration stays individual, and
+different overrides can split a lesson into more groups. Comprehension without
+source is excluded before generation. Failed reviews preserve passing siblings;
+failed lesson groups do not prevent later groups. Nothing automatically saves,
+repairs, retries or invokes the daily planning rubric. Only explicit resource Save
+writes resources. No plan/progress/current learning/carryover/monthly status writes.
+
+Per-resource instruction overrides replace the batch instruction for that resource;
+the UI explicitly says to repeat constraints that should remain. Saved JSON stores
+batch, override and effective instruction plus origin in instruction_context, with
+the existing instruction field retaining the actual checked instruction. Existing
+V1 title-only saves require no AI; instructional edits check on Save, never typing.
+Original resources and version history remain valid.
+
+Non-widget session state preserves editor inputs, pending candidates, Tomorrow
+options and planning date across normal Streamlit reruns/navigation. A hard browser
+refresh/new session/deployment can still lose unsaved work; durable saved resources
+persist. One consistent day-context read serves suggestions; fresh generation/save
+still enforce exact parent and evidence checks.
+
+### Live acceptance
+
+- Normal Thursday 1 October -> Friday 2 October selected the existing approved
+  Friday plan. Actual Friday 2 October -> Monday 5 October showed no approved
+  plan; it did not silently select another date. Explicit saved-day selection worked.
+- Existing English/Maths/Gaeilge/Art resources displayed Already saved and were
+  unchecked. Maths exit ticket became Already saved after its explicit save.
+- Full-day batches used the real Friday English, Maths, Gaeilge and Art lessons.
+  No-printing instructions were retained. Unknown unfinished English/missed
+  Gaeilge content remained recall/identification prompts, not invented tasks.
+- In the first batch, seven resources were generated: six Pass and one Maths
+  challenge Blocked for an unavailable source evidence reference. Its Maths exit
+  sibling remained Pass. Selected comprehension without a supplied passage was
+  skipped before AI; other lesson groups completed.
+- Second timing batch generated six new drafts across the same four lessons,
+  with the saved Maths exit deselected and source-blocked comprehension skipped.
+- Individual whiteboard override requested six small-number questions/no printing
+  with teacher answers. Result Pass; answers 4,3,3,5,8,8 were manually verified.
+  Explicit Save changed the original whiteboard record from revision 2 to 3,
+  retaining ID/creation time/history and leaving other existing resources unchanged.
+- Edited Maths exit title survived Current Learning -> Today navigation without
+  saving or AI. It was later explicitly saved as “Friday division strategy exit
+  ticket”. Saved exit and regenerated whiteboard remained after hard refresh/reopen.
+- Read-only copied-candidate probe inserted an incorrect 12 / 2 = 99 answer beside
+  a real saved sibling. First review rejected the wrong answer, but also falsely
+  called 2026-10-02 Thursday and blocked the valid dated exit title. Resource prompts
+  now receive code-verified calendar weekday labels without changing lesson context
+  digests. Final manual read-only probe paired the bad copy with the genuine
+  differentiated resource: bad Blocked, sibling Pass, saved resources unchanged.
+- Same probe classified a copied changed-evidence reference as Evidence changed,
+  did not associate a replaced-parent copy, and rejected a replaced plan ID. Actual
+  replaced-parent writes are tested in isolated databases, not production.
+
+### Calls and observed latency
+
+| Action | Actual AI calls | AI-only | Generation action | Complete app preparation |
+| --- | ---: | ---: | ---: | ---: |
+| First four-lesson batch, 7 drafts + blocked comprehension | 8 | 14.36s | 29.03s | Not instrumented |
+| Second four-lesson batch, 6 drafts + blocked comprehension | 8 | 14.80s | 29.35s | 54.56s |
+| Saved whiteboard regeneration with individual override | 2 | 4.07s | 7.84s | 32.82s |
+| First deliberately conflicting read-only review | 1 | 1.96s | — | — |
+| Calendar-grounded mixed review | 1 | 1.69s | — | — |
+
+Total acceptance calls: 20 = 9 generation + 11 compact reviews. Zero edit-review
+calls for title-only edits; zero planning calls, automatic repairs or retries.
+The second full-day batch was an explicit measurement repeat, not automatic repair.
+
+Complete app preparation measures the Generate callback before the full app rerun
+through completed result rendering, including app/database work. It excludes browser
+transport/paint. Continuous browser measurement for saved regeneration was 33.65s.
+The full-day browser sample was still pending at 55.31s and visible at 77.33s after
+an observation gap, so those are sampling bounds, not an exact 77.33s duration or
+an inference about network time. The calendar prompt refinement was added after
+the full-day timing samples; its final review was 1.69s. These are observations,
+not a performance guarantee. App/database overhead dominates the measured times.
+
+### Exact data comparison and restore upload
+
+Fresh pre-rollout and final format-6 backups were compared field by field. ONLY
+lesson_resources changed: one new exit ticket, and the same whiteboard ID revision
+2 -> 3. All six old IDs remain; the other five resources are exactly unchanged.
+Teacher Profile, Planning Setup, Current Learning, Actual Progress, all monthly
+plans/items/status updates, carryovers, period review and both exact approved plans
+match the baseline. Counts: 349 learning items, zero monthly outcome events, one
+real September 30 progress record, two outstanding carryovers, two day plans,
+seven resources. No fictional plans or teaching outcomes were saved.
+
+The complete real final export restored into an isolated SQLite adapter and
+re-exported exactly. A second restore returned False and left it unchanged.
+PostgreSQL CI separately covers restoration and additive resource metadata/history.
+
+Live restore upload WAS completed this time: the visible upload button opened the
+chooser; the verified 471,839-byte JSON attached and enabled Restore. Clicking
+Restore safely displayed “The database already contains saved data. Nothing has
+been overwritten.” A fresh post-refusal export is byte-for-byte identical to the
+final export. Production was never cleared. The actual empty-database restore is
+verified in isolation/CI; the live production acceptance verifies upload/refusal.
+
+### Remaining limits and next-work boundary
+
+- Weekday-only date logic; no holiday inference or new calendar service.
+- Review remains nondeterministic. Unsupported references, false positives,
+  malformed responses or API failures can block usable material. Manual editing
+  or individual regeneration is required; no automatic retry/repair.
+- A malformed review blocks all eligible resources in that affected group because
+  no trustworthy approval exists; other groups retain their results.
+- Per-resource overrides, source differences and existing-resource regeneration
+  can increase calls beyond two per lesson. No cross-lesson AI batching/background
+  jobs or token/dollar accounting.
+- Hard refresh/new session can lose unsaved drafts. Repeated Generate for missing
+  types can retain multiple unsaved candidate drafts; use individual regeneration
+  when revising one. Saved records are never duplicated automatically.
+- Source minimum length is a preliminary gate; semantic source relevance and
+  sufficiency still require review. Unknown carryover content needs teacher input.
+- App/database rerun overhead remains substantial. No new caching/background
+  infrastructure was introduced to conceal it.
+- PDFs/Word/slides, daily packs, holidays, templates and guaranteed browser draft
+  recovery remain deferred. No further implementation/acceptance work is pending
+  for this approved Resources for Tomorrow V1 scope.
