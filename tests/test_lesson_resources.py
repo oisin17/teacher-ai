@@ -69,6 +69,12 @@ class ResourceTests(unittest.TestCase):
  def test_review_edits_is_one_call(self):
   c=Mock();c.responses.create.return_value=SimpleNamespace(output_text=json.dumps({'checks':[{'type':'whiteboard','pass':True,'findings':[]}]}))
   findings,metrics=review([item()],context(),'','',c);self.assertFalse(findings['whiteboard']);self.assertEqual(c.responses.create.call_count,1)
+ def test_edit_review_excludes_old_findings_and_storage_metadata(self):
+  i=item();i['quality']={'findings':['OLD FAILURE']};i['versions']=[{'body':'OLD BODY'}]
+  c=Mock();c.responses.create.return_value=SimpleNamespace(output_text=json.dumps({'checks':[{'type':'whiteboard','pass':True,'findings':[]}]}))
+  review([i],context(),'','',c)
+  prompt=c.responses.create.call_args.kwargs['input']
+  self.assertNotIn('OLD FAILURE',prompt);self.assertNotIn('OLD BODY',prompt)
  def test_invalid_generation_preserves_caller(self):
   c=Mock();c.responses.create.return_value=SimpleNamespace(output_text='bad')
   with self.assertRaises(ResourceFailure): generate(context(),['whiteboard'],'','',True,c)
