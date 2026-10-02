@@ -620,6 +620,17 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.client.responses.create.call_count,calls)
         self.assertEqual(self.store.export_backup(),before)
 
+    def test_carryover_link_choices_share_one_fresh_read_per_rerun(self):
+        monthly=self.store.select_monthly_plan('2026-09-30')
+        items=[dict(id='carry-'+str(n),period_id=monthly['id'],created_date='2026-09-30',subject='Maths',learning='TEST pending learning '+str(n),evidence='Isolated test fixture',state='outstanding') for n in range(2)]
+        self.store.save_period_review(monthly,'2026-09-30',items,True)
+        before=self.store.export_backup()
+        app=self.new_app()
+        snapshot=app.session_state['performance_last_rerun']
+        self.assertEqual(snapshot['metrics']['storage.list_learning_items']['count'],1)
+        self.assertEqual(self.store.export_backup(),before)
+        self.client.responses.create.assert_not_called()
+
     def test_diagnostics_present_without_secrets_or_implicit_ai(self):
         from app_diagnostics import build_identity
         app=self.new_app()

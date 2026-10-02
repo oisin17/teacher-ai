@@ -24,6 +24,10 @@ plans, resources or class records are intentionally written by this review.
   through `_carryover`. It now reads each once, preserving its exact output and
   fresh generation/save checks. Three SELECTs removed per evidence packet
   (11 -> 8), not a cross-request cache or change to connection architecture.
+- Carryover link choices now use one fresh per-function read instead of one per
+  unlinked row; the live trace showed three total learning-list calls in the page.
+  On the two-carryover page this removes one connection and two SELECTs. No read
+  is reused after a write/rerun.
 - Malformed generation field types now fail safely inside the existing group
   handler instead of escaping during code checks and stopping later lessons.
 - Regeneration instruction edits survive normal navigation in session state,
@@ -31,7 +35,7 @@ plans, resources or class records are intentionally written by this review.
 - Current stateless AI calls default to `store=False`: optional provider response
   application-state storage is not needed by any current workflow. This does NOT
   promise zero retention; provider abuse-monitoring controls still apply.
-- Added 12 regression tests: 164 total; 63 persistence cases eligible for real PG
+- Added 13 regression tests: 165 total; 63 persistence cases eligible for real PG
   CI. Tests use isolated fixtures/mocks, not production teaching outcomes.
 
 ## Performance findings and measurement plan
@@ -40,6 +44,32 @@ Earlier measured four-lesson preparation: 14.80s AI-only, 54.56s through server
 result rendering; browser completion bounded by observations at 55.31–77.33s.
 Those old samples cannot retrospectively be split into connection, SQL and UI
 time. There is no evidence for calling all the ~40s difference "rendering".
+
+Live numeric verification of the diagnostic build `source-f726d1d4a7b8838c`:
+- Initial hot-deployment rerun: 25.3665s, 10 connections (10.0973s), 27 reads
+  (8.2857s), setup 5.2299s, lock 0.1585s, commit/close 1.4817s, fetch 0.0021s.
+  This includes cached-schema invalidation and initialization (5.1479s).
+- Warm read-only saved-Friday selection: 24.8753s, 11 connections (9.9660s),
+  35 reads (9.7325s), setup 3.2721s, lock 0.1477s, commit/close 1.6373s,
+  fetch 0.0029s. Disjoint DB stages total 24.7585s (~99.5% of this rerun).
+  No AI or class-record writes were invoked. This measures the ordinary page
+  overhead, not a rerun of classroom acceptance or the old full-day batch.
+
+The trace demonstrates database/network round-trip overhead, not expensive text
+rendering. Opening ~1s connections and ~0.28s/read round trips is substantial.
+The per-packet and carryover duplicate-read reductions are implemented; timings
+for the former were already reflected in these samples. No before/after speedup
+claim is made for that change because the old batch was not instrumented.
+
+Proposed next performance fix, **not implemented**: one bounded process-wide
+psycopg connection pool (initially min 0 or 1 / max 3, chosen after confirming
+hosting process count/provider limits), bounded checkout timeout, idle connection
+health checks/reconnect, transaction-local timeout and future workspace scope,
+rollback/reset on release and no checkout held over AI. Measure cold/warm traces,
+concurrent requests, exhaustion, dropped connections and cross-workspace leakage
+before rollout. This needs owner approval because it changes connection lifetime;
+no new service or paid infrastructure is needed. Pooling will not remove all SQL
+round trips; within-request read consolidation may still be justified later.
 
 Concrete execution path:
 

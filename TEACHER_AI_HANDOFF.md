@@ -1419,5 +1419,12 @@ resource generation contained per lesson group; regeneration instruction retaine
 across ordinary navigation; current stateless AI calls default store=False.
 Resource core V8, UI V10, Tomorrow V3, persistence V14; rubric remains V18.
 No new schema/auth/service, pooling, cross-request cache or durable drafts.
-Full-suite target: 164 tests, including 63 persistence cases in real PostgreSQL CI.
+Full suite: 165 tests pass locally, including 63 persistence cases in real PostgreSQL CI.
 Final CI and live numeric/read-only deployment verification follow this checkpoint.
+
+Diagnostic code commit 0cd3c24 passed real PostgreSQL CI 36995820976. Live source
+fingerprint f726d1d4a7b8838c matched. Warm read-only saved-day rerun: 24.8753s,
+11 connections 9.9660s, SQL reads 9.7325s, setup 3.2721s, lock 0.1477s,
+commit/close 1.6373s. Disjoint DB stages consumed ~99.5% of that no-AI rerun.
+One measured duplicate carryover-choice read is now removed with an additional
+regression test. Bounded pooling is proposed in the review, not implemented.

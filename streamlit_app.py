@@ -276,11 +276,13 @@ def carryover_controls(items):
     with st.expander("Carryover learning", expanded=any(i["state"] == "outstanding" for i in items)):
         if not items:
             st.caption("No confirmed carryover items.")
+        available = None
         for item in items:
             st.write(f"**{item['subject']} — {item['learning']}** ({item['state']})")
             st.caption(item["evidence"])
             if not item.get('monthly_item_id'):
-                available = [i for i in storage_call(store.list_learning_items) if not i['archived']]
+                if available is None:
+                    available = [i for i in storage_call(store.list_learning_items) if not i['archived']]
                 if available:
                     with st.expander('Link to a Monthly Plan item (optional)'):
                         target = st.selectbox('Same underlying learning item', [i['id'] for i in available], format_func=lambda id: next(i['subject'] + ' — ' + i['description'] for i in available if i['id'] == id), key='carry_link_' + item['id'])
