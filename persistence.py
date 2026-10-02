@@ -28,7 +28,7 @@ DOCUMENTS = {
     "current_learning_position": "position_data",
 }
 LOCK_ID = 73190421
-PERSISTENCE_VERSION = 12
+PERSISTENCE_VERSION = 13
 
 
 from monthly_learning import LearningStore, validate_item as validate_learning_item, validate_update, MARKER, planning_allowed, display_wording
@@ -456,6 +456,10 @@ class Store(LearningStore):
         if not lesson or plan.get('planning_quality', {}).get('state') != 'Pass':
             raise StorageError('Resource generation requires an exact saved rubric-approved lesson.')
         evidence = self._quality_context(connection, day)
+        return self._lesson_resource_context(day, plan_id, lesson, evidence)
+
+    @staticmethod
+    def _lesson_resource_context(day, plan_id, lesson, evidence):
         linked = {l['item_id'] for l in lesson.get('monthly_item_links', [])}
         carried = set(lesson.get('carryover_ids', []))
         return dict(plan_id=plan_id, planning_date=day, lesson=lesson,
@@ -465,10 +469,28 @@ class Store(LearningStore):
                     current=evidence['current_learning_position'],
                     recent_progress=evidence['recent_progress'])
 
+    def resource_day_contexts(self, day, plan_id):
+        """One consistent read for suggestions; generation/save still recheck evidence."""
+        with self._connection() as connection:
+            self._lock(connection)
+            row = connection.execute("SELECT plan_data FROM day_plans WHERE planning_date = %s", (day,)).fetchone()
+            plan = json.loads(row[0]) if row else None
+            if not plan or plan['plan_id'] != plan_id or plan.get('planning_quality', {}).get('state') != 'Pass':
+                raise StorageError('The approved plan changed. Reopen the saved day.')
+            evidence = self._quality_context(connection, day)
+            return {l['lesson_id']: self._lesson_resource_context(day, plan_id, l, evidence) for l in plan['lessons']}
+
     def resource_context(self, day, plan_id, lesson_id):
         with self._connection() as connection:
             self._lock(connection)
             return self._resource_context(connection, day, plan_id, lesson_id)
+
+    def approved_resource_plans(self):
+        """Actual saved plans, not progress snapshots or inferred future plans."""
+        with self._connection() as connection:
+            plans = [json.loads(row[0]) for row in connection.execute(
+                "SELECT plan_data FROM day_plans ORDER BY planning_date").fetchall()]
+        return [p for p in plans if p.get('planning_quality', {}).get('state') == 'Pass']
 
     def list_resources(self, day):
         with self._connection() as connection:

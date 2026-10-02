@@ -886,5 +886,44 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(current['status'], 'In progress')
         self.assertEqual(self.store.load_day('2026-09-30')['plan']['lessons'][1]['monthly_item_links'][0]['item_id'], 'item-0')
 
+
+    def test_tomorrow_raw_approved_plans_only_and_exact_contexts(self):
+        plan,resource=self.resource_fixture()
+        before=self.store.export_backup()
+        self.assertEqual(self.store.approved_resource_plans(),[plan])
+        contexts=self.store.resource_day_contexts(plan['planning_date'],plan['plan_id'])
+        self.assertEqual(contexts[plan['lessons'][0]['lesson_id']],resource['context'])
+        with self.assertRaises(StorageError): self.store.resource_day_contexts(plan['planning_date'],'replaced')
+        self.assertEqual(self.store.export_backup(),before)
+
+    def test_tomorrow_generation_save_regeneration_backup_preserves_class_data(self):
+        from resources_tomorrow import run_batches
+        from test_resources_tomorrow import fake_client
+        plan,old=self.resource_fixture();old=self.store.save_resource(old)
+        before=self.store.export_backup()
+        requests=[dict(lesson_id=old['lesson_id'],type='whiteboard',existing=old)]
+        result=run_batches(self.store,fake_client(),plan,requests,'no printing')
+        self.assertEqual(result['calls'],2);self.assertEqual(self.store.export_backup(),before)
+        regenerated=self.store.save_resource(result['resources'][0],old['revision'])
+        self.assertEqual((regenerated['id'],regenerated['revision']),(old['id'],2))
+        self.assertEqual(len(self.store.list_resources(plan['planning_date'])),1)
+        after=self.store.export_backup()
+        for key in before:
+            if key!='lesson_resources': self.assertEqual(after[key],before[key])
+        self.assertEqual(regenerated['instruction_context']['batch'],'no printing')
+        with self.store._connection() as connection:
+            for table in ['lesson_resources','monthly_item_updates','monthly_learning_items','period_reviews','carryover_items','monthly_plans','lesson_progress','day_plans',*DOCUMENTS,'actual_progress']:
+                connection.execute(f'DELETE FROM {table}')
+        self.assertTrue(self.store.restore_backup(after));self.assertEqual(self.store.export_backup(),after)
+        self.assertFalse(self.store.restore_backup(after));self.assertEqual(self.store.export_backup(),after)
+
+    def test_tomorrow_current_and_stale_preserved_after_evidence_change(self):
+        from resources_tomorrow import lesson_choices
+        plan,r=self.resource_fixture();saved=self.store.save_resource(r)
+        self.store.save_document('teacher_profile',{'class_level':'6th Class'})
+        c=self.store.resource_context(plan['planning_date'],plan['plan_id'],r['lesson_id'])
+        choices=lesson_choices(c,[saved]);self.assertEqual(choices[0]['status'],'Evidence changed')
+        self.assertEqual(self.store.list_resources(plan['planning_date']),[saved])
+
 if __name__ == "__main__":
     unittest.main()

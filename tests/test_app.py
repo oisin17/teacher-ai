@@ -539,6 +539,73 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.store.load_document("teacher_profile"), before)
 
 
+
+    def tomorrow_app(self):
+        import json
+        from planning_quality import digest
+        from test_resources_tomorrow import fake_client
+        app=self.new_app()
+        plan=sample_plan('2026-10-01')
+        context=self.store.planning_quality_context('2026-10-01')
+        plan['monthly_plan']={k:context['monthly_plan'][k] for k in ('id','title','start_date','end_date')}
+        plan['planning_quality']=dict(state='Pass',context_digest=digest(context),version=18,revision_count=0,initial_findings=[],carryover_decisions=[],extra_ai_calls=1,latency_seconds=0)
+        self.store.save_day_plan(plan)
+        self.client.responses.create.side_effect=fake_client().responses.create.side_effect
+        app.date_input[0].set_value(date(2026,9,30)).run()
+        return app,plan
+
+    def test_tomorrow_ui_missing_day_and_explicit_other_day(self):
+        app,plan=self.tomorrow_app()
+        self.assertTrue(any('Tomorrow — Thursday 01 October' in s.value for s in app.subheader))
+        app.date_input[0].set_value(date(2026,10,2)).run()
+        self.assertTrue(any('No approved saved plan is available for 2026-10-05' in i.value for i in app.info))
+        next(w for w in app.checkbox if w.label=='Choose another saved day').check().run()
+        self.assertTrue(any('Selected day — Thursday 01 October' in s.value for s in app.subheader))
+        self.assertEqual(self.client.responses.create.call_count,0)
+
+    def test_tomorrow_draft_navigation_edit_and_checked_save(self):
+        app,plan=self.tomorrow_app();before=self.store.export_backup()
+        self.button(app,'Generate tomorrow resources').click().run()
+        self.assertEqual(len(app.exception),0)
+        # Maths, English, Gaeilge: one generation and review each.
+        self.assertEqual(self.client.responses.create.call_count,6)
+        self.assertEqual(self.store.export_backup(),before)
+        widget=next(w for w in app.text_area if w.label=='Classroom content')
+        widget.set_value('On mini-whiteboards: 14 ÷ 2.').run()
+        calls=self.client.responses.create.call_count
+        self.navigate(app,'Current Learning');self.navigate(app,'Today')
+        self.assertTrue(any(w.value=='On mini-whiteboards: 14 ÷ 2.' for w in app.text_area))
+        self.assertEqual(self.client.responses.create.call_count,calls)
+        self.button(app,'Save resource').click().run()
+        self.assertEqual(len(app.exception),0)
+        saved=self.store.list_resources('2026-10-01');self.assertEqual(len(saved),1)
+        self.assertEqual(saved[0]['body'],'On mini-whiteboards: 14 ÷ 2.')
+        self.assertEqual(self.client.responses.create.call_count,calls+1)
+        for key,value in before.items():
+            if key!='lesson_resources': self.assertEqual(self.store.export_backup()[key],value)
+        fresh=self.new_app();fresh.date_input[0].set_value(date(2026,9,30)).run()
+        choices=[w for w in fresh.checkbox if 'Already saved — regenerate?' in w.label]
+        self.assertEqual(len(choices),1);self.assertFalse(choices[0].value)
+        choices[0].check()
+        # Deselect all other suggestions so the saved resource takes its individual path.
+        for w in fresh.checkbox:
+            if 'No resource saved' in w.label: w.uncheck()
+        self.button(fresh,'Generate tomorrow resources').click().run()
+        self.assertEqual(len(fresh.exception),0)
+        self.assertEqual(self.store.list_resources('2026-10-01'),saved)
+        self.button(fresh,'Save changes').click().run()
+        self.assertEqual(self.store.list_resources('2026-10-01')[0]['id'],saved[0]['id'])
+        self.assertEqual(self.store.list_resources('2026-10-01')[0]['revision'],2)
+
+    def test_existing_lesson_editor_unsaved_inputs_survive_navigation(self):
+        app=self.resource_app();app.multiselect[0].set_value(['whiteboard'])
+        self.button(app,'Generate selected resources').click().run()
+        calls=self.client.responses.create.call_count
+        next(w for w in app.text_area if w.label=='Classroom content').set_value('My unsaved content').run()
+        self.navigate(app,'Teacher Profile');self.navigate(app,'Today')
+        self.assertTrue(any(w.value=='My unsaved content' for w in app.text_area))
+        self.assertEqual(self.client.responses.create.call_count,calls)
+        self.assertEqual(self.store.list_resources('2026-09-30'),[])
+
 if __name__ == "__main__":
     unittest.main()
-

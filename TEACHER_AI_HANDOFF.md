@@ -1212,3 +1212,37 @@ hot reload briefly produced an import KeyError during acceptance; refresh recove
 and durable data was unaffected. Runtime-SHA display, full storage/UI latency and
 AI token-cost telemetry are absent. PDF/Word/slides, packs, templates, uploaded
 style exemplars and multi-user authentication remain future work.
+
+## Resources for Tomorrow V1 — implementation checkpoint (2026-10-02)
+
+Approved additive orchestration is implemented in resources_tomorrow.py and the
+existing lesson_resources_ui.py. Next weekday is calculated after the explicitly
+selected planning date (which defaults to today's Dublin date); Friday/weekends
+move to Monday. Missing exact-day approved plans do not silently skip. An explicit
+saved-day selector shows the selected date. Raw approved day_plans are used, not
+progress snapshots. Suggestions reuse V1 rules, rank 1–3 types without AI, and
+recognise exact current resources as “Already saved — regenerate?” (deselected).
+Changed evidence and earlier plan associations remain distinct.
+
+New selected types group by lesson/effective instruction/source/answer preference.
+One generation and compact review handles each group. Selected saved resources use
+the shared individual regeneration helper, retaining ID/revision/creation/title;
+no duplicate record is created. Per-resource override replaces batch instruction;
+both and the effective instruction persist in additive resource JSON metadata.
+Source-blocked comprehension is filtered before calls. Review failures preserve
+passing siblings; failed lesson groups do not stop other groups. Nothing autosaves,
+repairs or retries. Only explicit V1 Save writes lesson_resources.
+
+Editor inputs and Tomorrow options now have non-widget session draft state, and
+the selected planning date survives navigation. AI runs only at explicit Generate,
+Regenerate or content-edit Save. Hard-refresh/new-session recovery is not promised.
+A single consistent day-context read reduces suggestion connection/query overhead;
+generation and save still recheck fresh exact lesson evidence. Persistence API v13
+requires no new table or backup format. Core resource module v6 / UI module v7
+provide hot-reload detection. No planning rubric changes.
+
+151 local tests pass, including 61 persistence tests eligible for real PostgreSQL
+CI. Deployment, live acceptance, latency measurements, fresh export comparison and
+restore-upload check are pending at this checkpoint. A read-only resources_probe
+mode checks a deliberately wrong copied Maths answer beside a genuine saved
+sibling; it never saves candidates or teaching outcomes.

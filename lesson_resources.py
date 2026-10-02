@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timezone
 from uuid import uuid4
 
-VERSION = 5
+VERSION = 6
 TYPES = {
  'whiteboard': 'Mini-whiteboard questions', 'practice': 'Practice / task sheet',
  'differentiated': 'Differentiated task sheet', 'quiz': 'Quiz / retrieval questions',
@@ -92,6 +92,15 @@ def generate(context,types,instruction,source,answers,client):
 
 def checked_digest(resource):
  return digest({k:resource[k] for k in ('body','guidance','context','source_text','instruction','include_answers')})
+
+
+def regenerate_resource(resource, context, instruction, client):
+ """Generate a checked replacement draft; preserve the original durable identity."""
+ candidate=generate(context,[resource['type']],instruction,resource['source_text'],resource['include_answers'],client)[0]
+ candidate.update(id=resource['id'],revision=resource['revision'],created_at=resource['created_at'],title=resource['title'])
+ if resource.get('instruction_context'):
+  candidate['instruction_context']=dict(resource['instruction_context'],effective=instruction)
+ return candidate
 
 
 def validate_saved(resource):

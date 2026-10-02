@@ -33,7 +33,7 @@ if refresh_lessons:
 import persistence
 # Streamlit hot reload can retain the previous imported storage module.
 # Reload only when that cached module lacks this rollout's additive API.
-if refresh_lessons or getattr(persistence, "PERSISTENCE_VERSION", None) != 12:
+if refresh_lessons or getattr(persistence, "PERSISTENCE_VERSION", None) != 13:
     importlib.reload(persistence)
 from persistence import Store, StorageError
 import planning_quality
@@ -41,7 +41,7 @@ if getattr(planning_quality, "QUALITY_MODULE_VERSION", None) != 18:
     importlib.reload(planning_quality)
 from planning_quality import quality_gate, QualityFailure, protected_blocks
 import lesson_resources_ui
-if getattr(lesson_resources_ui, 'MODULE_VERSION', None) != 6:
+if getattr(lesson_resources_ui, 'MODULE_VERSION', None) != 7:
     importlib.reload(lesson_resources_ui)
 import json
 from datetime import date, timedelta
@@ -402,7 +402,9 @@ if page == "Today":
     # Without an explicit session-state key, interactions elsewhere on this
     # page (such as the progress radio) can rebuild the date input from today.
     if "planning_date" not in st.session_state:
-        st.session_state["planning_date"] = date.today()
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        st.session_state["planning_date"] = st.session_state.get('planning_date_value', datetime.now(ZoneInfo('Europe/Dublin')).date())
 
     planning_date = st.date_input(
         "Which school date are you planning?",
@@ -410,6 +412,7 @@ if page == "Today":
         format="DD/MM/YYYY"
     )
     planning_day = planning_date.strftime("%A")
+    st.session_state['planning_date_value'] = planning_date
     st.caption(f"Planning for **{planning_day}, {planning_date.strftime('%d %B %Y')}**")
 
     if planning_day in ["Saturday", "Sunday"]:
@@ -683,6 +686,8 @@ if page == "Today":
         st.info("This date has a historical whole-day record. Review or correct it in Progress History.")
     else:
         st.info("No lessons generated for this date yet. Upload your planning documents and click Generate Today's Plan.")
+
+    lesson_resources_ui.tomorrow_panel(store, client, planning_date.isoformat())
 
 # ---------- PROGRESS HISTORY ----------
 
