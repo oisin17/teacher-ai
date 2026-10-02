@@ -2,7 +2,7 @@
 
 **Repository:** `oisin17/teacher-ai`  
 **Current deployment:** Streamlit prototype (currently used through `teacher-ai-oisin.streamlit.app`)  
-**Handoff date:** 2026-09-30  
+**Handoff date:** 2026-10-02  
 **Target:** testable V1 by February 2027, with real classroom/placement testing beginning in January 2027.
 
 ## 1. Product vision
@@ -1082,3 +1082,133 @@ Friday's earlier accepted plan contained a single-time Morning Meeting, now repl
 by the explicit-interval rerun. A genuine classroom progress save remains teacher
 acceptance work. Exact runtime-SHA display and complete browser/storage latency
 instrumentation are not implemented; do not report either as measured.
+
+## Integrated lesson resources V1 — 2 October 2026
+
+Resume point: the interrupted implementation was already on main through
+`b2174bb5014eaab70984bccd5841f6c7b1d201b8`. Inspection of main, its four resource
+commits, this handoff, tests and the deployed controls confirmed that only live
+resource acceptance and final documentation remained. A fresh format-6 export
+contained zero resources before this continuation. The completed planning rubric
+and real October 1/2 plans were inspected and preserved, not regenerated.
+
+Implementation and live fixes are now through
+`3aa354bb94204e7f3df62ce8121c5cd792468263`. The deployed app produced checked
+resources using the latest resource code (version 5). Exact runtime Git SHA is
+still not displayed. CI passed at
+https://github.com/oisin17/teacher-ai/actions/runs/36969143355 : 131 unique tests in
+the full suite, plus the 58 persistence tests rerun against real PostgreSQL 16.
+Local final suite: 131 tests, 12.979 seconds, all passing.
+
+### Additive architecture and teacher workflow
+
+`lesson_resources.py` implements the eleven approved types: mini-whiteboard,
+practice/task sheet, differentiated task sheet, quiz/retrieval, exit ticket,
+discussion/oral language, modelling, challenge/early finisher, Gaeilge oral
+language, source-grounded comprehension, and instructions/checklist. Suggestions
+are code-only. Generate up to four selected types in one generation call and one
+compact batch review with the existing `gpt-5.4-mini` model. Code can block before
+review; missing comprehension source blocks before either AI call. There is no
+automatic repair loop and no full daily-plan rubric invocation.
+
+`lesson_resources_ui.py` attaches Create resources / saved resources to each
+actual lesson. Drafts remain in session until explicit Save resource/Save changes.
+Teachers edit freely; only submitted content/guidance edits cause one compact
+review. Title-only changes use zero AI calls. Optional teacher answers are
+separate from pupil content. Stored generation instructions, source material and
+answer preference are reused for individual regeneration. Regeneration is a new
+draft, retaining the resource identity; it does not overwrite storage until saved.
+Copy controls and earlier saved versions are available.
+
+`persistence.py` version 12 adds `lesson_resources` with owner_scope, date, plan
+ID, lesson ID and JSON payload. Payload includes exact lesson/context snapshot,
+evidence references/digests, original supplied source, instruction, answers
+preference, timestamps, quality results, latency/call metrics, optimistic revision
+and previous saved versions. Only saved Pass planning lessons can generate; fresh
+parent/evidence checks and revision guards protect save. Historical/replaced
+parent resources remain readable/copyable and are never silently reassociated.
+Owner scope is currently single-teacher; authenticated user ownership/isolation
+must be added before multi-user use. No progress, carryover, Current Learning,
+Monthly Plan status or saved lesson writes occur in this resource workflow.
+
+Backup format 6 includes resources and historical versions. Formats 1–5 remain
+restorable. Restore validates the full payload before writes and returns False
+for a nonempty store. Initial resource deployment's cached-schema bootstrap was
+fixed earlier by keying initialization to PERSISTENCE_VERSION. No new service or
+infrastructure was introduced.
+
+### Live acceptance and measured calls
+
+Six resources were saved from the existing approved real lessons:
+
+| Lesson/resource | Generation | Review | Result |
+| --- | ---: | ---: | --- |
+| Friday Maths: whiteboard + differentiated batch | 3.34s | 1.19s | Both Pass; saved separately |
+| Friday English: four unknown-task recall prompts | 2.64s | 1.03s | Pass; actual unfinished content not invented |
+| Friday Gaeilge: four recall-only questions | 3.93s | 2.05s, then 2.26s edit review | Initial review blocked; corrected wording/check saved Pass |
+| Friday Art: pumpkin-patch board checklist | 2.37s | 1.07s | Pass; no forced answer section |
+| Thursday History: supplied TEST passage comprehension | 2.00s | 1.09s | Pass; title explicitly labels TEST passage |
+| Maths individual whiteboard regeneration | 3.20s | 1.50s | Pass; same resource ID, revision 2 |
+
+All resources used no-printing instructions. Differentiated Maths has smaller
+support/core sets and a strategy-comparison reasoning challenge. English asks
+what the unfinished task was without inventing a text or programme exercise.
+Gaeilge's teacher-edited questions refer to assembly day rather than assuming
+"yesterday". Comprehension with no source displayed “No AI call made”; the
+labelled supplied Famine passage generated only questions supported by that text.
+The test passage is acceptance material, not evidence that pupils were taught it.
+
+Across this continuation: 25 resource AI calls = 12 generation + 10 compact review
++ 3 edit-review calls. This includes pre-fix failures and explicit manual retries.
+There were seven manual generation reruns/regenerations (three Maths batch
+reruns, and one each for Art, Gaeilge, comprehension and the saved whiteboard),
+two blocked differentiated-edit submissions, and one successful Gaeilge edit.
+There were zero automatic repairs. Art's later title-only edit used no AI and
+became revision 2. No other resource changed during individual Maths regeneration;
+the differentiated resource matches the pre-regeneration export exactly. Samples
+are observations, not a benchmark or promised response time. Initial generation
+samples ranged 1.75–4.48s; review samples 1.03–2.26s, excluding code-only blocks.
+Storage/rerender waits added noticeable latency and were not instrumented end to
+end. There is no token/dollar accounting yet.
+
+Acceptance exposed and fixed actual issues rather than rebuilding the feature:
+constrain evidence categories and exact resource type IDs in structured outputs;
+state that passing checks have empty findings; separate pupil content/answers;
+exclude previous quality failures/version history from edit review to prevent
+anchoring; clarify valid unknown-task recall questions; explicitly require lesson
+and (for comprehension) source evidence references. Malformed responses, omitted
+references and incorrect/confusing answers remained unsaved. Model review still
+has false positives/negatives and cannot guarantee factual or classroom quality.
+
+The read-only stale-reference probe rejected a replaced plan ID and explicitly
+reported saved resources unchanged. Both Art and Maths were refreshed/reopened;
+saved content and versions persisted. Real replaced-parent writes are covered by
+automated tests, without replacing the real classroom plans in acceptance.
+
+### Data preservation and restore validation
+
+Fresh baseline and final format-6 exports were compared field by field. ONLY
+lesson_resources changed. Teacher Profile, Planning Setup, Current Learning,
+Actual Progress, all monthly definitions/status updates/documents, period reviews,
+carryover and both exact approved day plans match. Counts remain 349 learning
+items, zero item outcome events, one genuine September 30 progress record, two
+outstanding carryovers and two day plans. Final export has six resources; Art and
+whiteboard have two saved versions each. No fictional teaching outcomes were saved.
+
+The entire final export, including historical resource versions, restored into
+an isolated SQLite test adapter and re-exported exactly. A second restore returned
+False and left it unchanged. Separate PostgreSQL CI passes resource backup/restore,
+atomic invalid-backup rejection, legacy compatibility, optimistic saves and
+stale/replaced parents. Production was never cleared or overwritten. Browser
+file-chooser/upload attempts did not leave an uploaded file available to the live
+Restore button, so live UI restore/refusal remains unverified. Do not describe that
+specific browser acceptance as passed; the core restore and PostgreSQL CI passed.
+
+Remaining V1 limits: nondeterministic review may block a valid resource; manual
+edit/regeneration is required. Source minimum length is only a preliminary gate,
+with relevance/sufficiency checked semantically. Unknown task content still needs
+teacher identification. Unsaved drafts may be lost on refresh/deployment. Streamlit
+hot reload briefly produced an import KeyError during acceptance; refresh recovered
+and durable data was unaffected. Runtime-SHA display, full storage/UI latency and
+AI token-cost telemetry are absent. PDF/Word/slides, packs, templates, uploaded
+style exemplars and multi-user authentication remain future work.
